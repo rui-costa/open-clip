@@ -1,0 +1,45 @@
+{
+  "steps": {
+    "transcribe": {
+      "command": "transcribe",
+      "depends_on": [],
+      "auto_run": true
+    },
+    "highlights": {
+      "command": "highlights",
+      "depends_on": [
+        "transcribe"
+      ],
+      "auto_run": true
+    },
+    "metadata": {
+      "command": "metadata",
+      "depends_on": [
+        "transcribe"
+      ],
+      "auto_run": true
+    },
+    "clipper": {
+      "command": "clipper",
+      "depends_on": [
+        "highlights",
+        "metadata"
+      ],
+      "auto_run": true
+    },
+    "upload": {
+      "command": "upload",
+      "depends_on": [
+        "clipper"
+      ],
+      "auto_run": false
+    }
+  },
+  "execution_order": [
+    "transcribe",
+    "highlights",
+    "metadata",
+    "clipper",
+    "upload"
+  ]
+}

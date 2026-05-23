@@ -1,0 +1,111 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv
+venv/
+ENV/
+env/
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Testing
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.nose*
+.hypothesis/
+*.cover
+test-results/
+frontend/test-results/
+
+# Build and packaging
+*.whl
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Audio/Video files (media)
+*.wav
+*.mp3
+*.mp4
+*.m4a
+*.flac
+*.ogg
+*.webm
+
+# Output files
+output.txt
+output.json
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Node (if used)
+node_modules/
+npm-debug.log
+
+# Git
+.git/
+
+#Project folders
+projects/*
+
+#Inital test project
+!projects/00000000-0000-0000-0000-000000000000/
+!projects/00000000-0000-0000-0000-000000000000/*.mp4
+!projects/00000000-0000-0000-0000-000000000000/clips/*.mp4
+
+#credentials
+backend/youtube_credentials/*
+client_secret*.json
+token.json
+.env
+
+#AI coding agents
+.gemini/
+.claude/
+.codex/
