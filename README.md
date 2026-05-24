@@ -32,7 +32,9 @@ Ensure you have [Docker](https://www.docker.com/) and [Docker Compose](https://d
    docker-compose up --build
    ```
 
-4. Access the services:
+4. [Learn how to use the application in our User Guide →](docs/USER_GUIDE.md)
+
+5. Access the services:
    - **Frontend**: [http://localhost:5173](http://localhost:5173)
    - **Backend API**: [http://localhost:8000](http://localhost:8000)
 
