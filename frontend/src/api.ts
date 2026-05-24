@@ -1,4 +1,4 @@
-import axios from 'axios';
+const BASE_URL = 'http://localhost:8000';
 
 export type ProjectMetadata = {
   project_id: string;
@@ -8,69 +8,84 @@ export type ProjectMetadata = {
   clips_count?: number;
 };
 
-const api = axios.create({
-  baseURL: 'http://localhost:8000',
-  headers: {
+async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const url = `${BASE_URL}${endpoint}`;
+  const headers = {
     'Content-Type': 'application/json',
-  },
-});
+    ...options.headers,
+  };
+
+  const response = await fetch(url, { ...options, headers });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `Request failed with status ${response.status}`);
+  }
+
+  return response.json();
+}
 
 export const createProject = async (file: File) => {
-  const response = await api.post('/project/create', file, {
+  return apiRequest('/project/create', {
+    method: 'POST',
     headers: {
       'Content-Type': 'application/octet-stream',
       'X-File-Name': file.name,
     },
+    body: file,
   });
-  return response.data;
 };
 
 export const processProject = async (projectId: string) => {
-  const response = await api.post('/project/process', { project_id: projectId });
-  return response.data;
+  return apiRequest('/project/process', {
+    method: 'POST',
+    body: JSON.stringify({ project_id: projectId }),
+  });
 };
 
 export const getProjects = async (): Promise<ProjectMetadata[]> => {
-  const response = await api.get('/projects');
-  return response.data;
+  return apiRequest('/projects');
 };
 
 export const getProjectMetadata = async (projectId: string) => {
-  const response = await api.get(`/project/${projectId}`);
-  return response.data;
+  return apiRequest(`/project/${projectId}`);
 };
 
 export const getPipelineConfig = async () => {
-  const response = await api.get('/pipeline/config');
-  return response.data;
+  return apiRequest('/pipeline/config');
 };
 
 export const getSettings = async () => {
-  const response = await api.get('/settings');
-  return response.data;
+  return apiRequest('/settings');
 };
 
 export const updateSettings = async (payload: { settings: any, pipeline_config?: any }) => {
-  const response = await api.post('/settings', payload);
-  return response.data;
+  return apiRequest('/settings', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 };
 
 export const getActiveProcesses = async (): Promise<string[]> => {
-  const response = await api.get('/active_processes');
-  return response.data;
+  return apiRequest('/active_processes');
 };
 
 export const executePipelineStep = async (projectId: string, step: string, action: 'START' | 'STOP') => {
-  const response = await api.post('/project/step', { project_id: projectId, step, action });
-  return response.data;
+  return apiRequest('/project/step', {
+    method: 'POST',
+    body: JSON.stringify({ project_id: projectId, step, action }),
+  });
 };
 
 export const uploadClip = async (projectId: string, clipIndex: number) => {
-  const response = await api.post(`/project/${projectId}/clip/${clipIndex}/upload`);
-  return response.data;
+  return apiRequest(`/project/${projectId}/clip/${clipIndex}/upload`, {
+    method: 'POST',
+  });
 };
 
 export const deleteProject = async (projectId: string) => {
-  const response = await api.delete(`/project/${projectId}`);
-  return response.data;
+  // fetch delete doesn't return data usually, but this satisfies the existing signature
+  const response = await fetch(`${BASE_URL}/project/${projectId}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error('Failed to delete project');
+  return { status: 'deleted' };
 };
