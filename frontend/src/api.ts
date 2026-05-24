@@ -25,14 +25,36 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
   return response.json();
 }
 
-export const createProject = async (file: File) => {
-  return apiRequest('/project/create', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/octet-stream',
-      'X-File-Name': file.name,
-    },
-    body: file,
+export const createProject = async (
+  file: File, 
+  onProgress?: (progress: number) => void
+): Promise<{ project_id: string }> => {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${BASE_URL}/project/create`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.setRequestHeader('X-File-Name', file.name);
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        // Cap upload progress at 95% to leave room for server-side processing/finalization
+        const percentComplete = Math.min(95, Math.round((event.loaded / event.total) * 100));
+        onProgress(percentComplete);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (onProgress) onProgress(100);
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        const errorData = JSON.parse(xhr.responseText || '{}');
+        reject(new Error(errorData.error || `Upload failed with status ${xhr.status}`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error('Network error during upload'));
+    xhr.send(file);
   });
 };
 

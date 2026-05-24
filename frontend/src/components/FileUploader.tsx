@@ -1,15 +1,53 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { PongGame } from './PongGame';
+
+const UPLOAD_VERBS = [
+  "Uploading...",
+  "Moving data...",
+  "Securing packets...",
+  "Transferring...",
+  "Writing to disk..."
+];
+
+const PROCESSING_VERBS = [
+  "Transcribing...",
+  "Analyzing Audio...",
+  "Extracting Highlights...",
+  "Generating Clips...",
+  "Finalizing Project..."
+];
 
 interface FileUploaderProps {
   onFileSelect: (file: File) => void;
   isPending: boolean;
+  uploadProgress: number;
   onSubmit: () => void;
 }
 
-export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPending, onSubmit }) => {
+export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPending, uploadProgress, onSubmit }) => {
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [verbIndex, setVerbIndex] = useState(0);
+  const [showGame, setShowGame] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setVerbIndex((prev) => (prev + 1) % (uploadProgress < 100 ? UPLOAD_VERBS.length : PROCESSING_VERBS.length));
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [uploadProgress]);
+
+  useEffect(() => {
+    if (!isPending) setShowGame(false);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isPending && [' ', 'Enter'].includes(e.key)) {
+        setShowGame(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPending]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -40,15 +78,16 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
         border: dragActive ? '4px dashed var(--accent)' : '4px dashed var(--text)', 
         textAlign: 'center',
         backgroundColor: 'var(--bg)',
-        cursor: 'pointer',
+        cursor: isPending ? 'default' : 'pointer',
         transition: 'border 200ms var(--ease-out-quart), transform 200ms var(--ease-out-quart)',
         transform: dragActive ? 'scale(1.01)' : 'scale(1)',
+        position: 'relative'
       }}
       onDragEnter={(e) => { e.preventDefault(); setDragActive(true); }}
       onDragLeave={(e) => { e.preventDefault(); setDragActive(false); }}
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
-      onClick={() => fileInputRef.current?.click()}
+      onClick={() => !isPending && fileInputRef.current?.click()}
     >
       <input 
         ref={fileInputRef} 
@@ -58,7 +97,53 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
         onChange={handleFileChange} 
       />
       
-      {!file ? (
+      {isPending ? (
+        <div 
+          style={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            gap: 'var(--space-md)',
+            padding: 'var(--space-xl)',
+            width: '100%',
+            height: '100%',
+            zIndex: 1
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div className="spinner" style={{ 
+                width: '60px', 
+                height: '60px', 
+                border: '6px solid var(--border)', 
+                borderTop: '6px solid var(--accent)', 
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite' 
+            }} />
+            <h2 style={{ fontSize: '2rem', textTransform: 'uppercase', margin: '10px 0', color: 'var(--text)' }}>
+                {uploadProgress < 100 ? UPLOAD_VERBS[verbIndex] : PROCESSING_VERBS[verbIndex]}
+            </h2>
+            <p style={{ fontSize: '1.2rem', marginBottom: 'var(--space-sm)', color: 'var(--text)' }}>
+                {uploadProgress < 100 ? `${uploadProgress}% Complete` : 'Processing...'}
+            </p>
+            {uploadProgress < 100 && (
+                <div style={{ width: '300px', height: '20px', background: 'var(--border)', borderRadius: '10px', overflow: 'hidden' }}>
+                <div style={{ width: `${uploadProgress}%`, height: '100%', background: 'var(--accent)', transition: 'width 200ms ease-out' }} />
+                </div>
+            )}
+            <p style={{ color: 'var(--text-muted)', marginTop: '10px' }}>
+                {uploadProgress < 100 ? 'Uploading heavy file, please do not close this window.' : 'Backend processing in progress.'}
+            </p>
+            {!showGame && (
+                <p style={{ fontSize: '0.9rem', color: 'var(--accent)', fontStyle: 'italic', marginTop: '10px' }}>
+                Press Space to start Background Pong
+                </p>
+            )}
+          </div>
+          {showGame && <PongGame active={isPending} />}
+        </div>
+      ) : !file ? (
         <>
           <h2 style={{ fontSize: '3rem', fontWeight: 900, margin: '0 0 var(--space-sm) 0', textTransform: 'uppercase' }}>
             Upload Video
@@ -105,7 +190,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
               onClick={(e) => { e.stopPropagation(); onSubmit(); }}
               style={{ fontSize: '1.5rem', padding: 'var(--space-md) var(--space-xl)' }}
             >
-              {isPending ? 'CREATING PROJECT...' : 'CREATE PROJECT'}
+              CREATE PROJECT
             </button>
             <button 
               onClick={(e) => { e.stopPropagation(); setFile(null); }} 
@@ -120,6 +205,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
         </div>
       )}
       <style>{`
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes bounce {
           0%, 20%, 50%, 80%, 100% {transform: translateY(0);}
           40% {transform: translateY(-10px);}

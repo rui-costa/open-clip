@@ -82,12 +82,17 @@ export default function App() {
     refetchOnWindowFocus: false,
   });
 
+  const [uploadProgress, setUploadProgress] = useState(0);
+
   const createMutation = useMutation({
-    mutationFn: createProject,
+    mutationFn: (file: File) => createProject(file, setUploadProgress),
     onSuccess: (data) => {
       navigate(`/project/${data.project_id}`);
     },
-    onError: (error: any) => console.error(error)
+    onError: (error: any) => {
+      console.error(error);
+      setUploadProgress(0);
+    }
   });
 
   const deleteProjectMutation = useMutation({
@@ -209,6 +214,7 @@ export default function App() {
                 <FileUploader 
                   onFileSelect={(f) => setFile(f)} 
                   isPending={createMutation.isPending} 
+                  uploadProgress={uploadProgress}
                   onSubmit={handleSubmit} 
                 />
               </div>
