@@ -78,3 +78,13 @@ Please report any security vulnerabilities by opening a private GitHub Security 
 ## License
 
 AGPL v3 © The Open-Clip Authors
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=rui-costa%2Fopen-clip&type=date&logscale=&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=rui-costa/open-clip&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=rui-costa/open-clip&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=rui-costa/open-clip&type=date&legend=top-left" />
+ </picture>
+</a>
