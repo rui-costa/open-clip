@@ -1,11 +1,15 @@
 import os
 import shutil
 import json
+import threading
 from dataclasses import asdict, is_dataclass
 from typing import Dict, Any, List
 from backend.src.repository import StorageRepository
 
 class FileSystemRepository(StorageRepository):
+    def __init__(self):
+        self._lock = threading.Lock()
+
     def exists(self, path: str) -> bool:
         return os.path.exists(path)
 
@@ -15,9 +19,10 @@ class FileSystemRepository(StorageRepository):
 
     def write_json(self, path: str, data: Dict[str, Any]) -> None:
         temp_path = f"{path}.tmp"
-        with open(temp_path, "w") as f:
-            json.dump(data, f, indent=2)
-        os.replace(temp_path, path)
+        with self._lock:
+            with open(temp_path, "w") as f:
+                json.dump(data, f, indent=2)
+            os.replace(temp_path, path)
 
     def save_object(self, path: str, obj: Any) -> None:
         """Serialize and save an object (dataclass or dict) to JSON."""
@@ -30,9 +35,10 @@ class FileSystemRepository(StorageRepository):
             raise TypeError(f"Type {type(obj)} not serializable")
 
         temp_path = f"{path}.tmp"
-        with open(temp_path, "w") as f:
-            json.dump(data, f, indent=2, default=json_serial)
-        os.replace(temp_path, path)
+        with self._lock:
+            with open(temp_path, "w") as f:
+                json.dump(data, f, indent=2, default=json_serial)
+            os.replace(temp_path, path)
 
     def delete(self, path: str) -> None:
         if os.path.exists(path):

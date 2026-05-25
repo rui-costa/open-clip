@@ -9,6 +9,22 @@ def test_transcriber_init(mock_load):
 
 @patch('whisper.load_model')
 @patch('os.path.exists')
+def test_transcriber_process_relative_path(mock_exists, mock_load):
+    mock_exists.side_effect = lambda path: path.endswith("episode.mp4")
+    
+    model = mock_load.return_value
+    model.transcribe.return_value = {
+        "text": "hello world",
+        "segments": [{"words": [{"word": "hello", "start": 0.1, "end": 0.5}]}]
+    }
+    
+    t = Transcriber()
+    text, words = t.transcribe("episode.mp4", project_path="/projects/123")
+    assert text == "hello world"
+    mock_load.return_value.transcribe.assert_called()
+
+@patch('whisper.load_model')
+@patch('os.path.exists')
 def test_transcriber_process(mock_exists, mock_load):
     mock_exists.return_value = True
     model = mock_load.return_value

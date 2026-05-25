@@ -34,10 +34,14 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
 
   const getStepStatus = (stepName: string): StepStatus => {
     if (activeProcesses.includes(`${metadata.project_id}_${stepName}`)) return 'running';
+    
+    // Check for explicit status if tracked in metadata
+    if (metadata.step_statuses?.[stepName] === 'completed') return 'executed';
+    if (metadata.step_statuses?.[stepName] === 'failed') return 'todo'; // Or handle failed state
 
     const isExecuted = (name: string) => {
+      // Keep existing fallback logic for older projects or incomplete data
       if (name === 'transcribe' && metadata.transcription_file) return true;
-      // Check for file OR existence of the data array
       if (name === 'highlights' && (metadata.highlights_file || (metadata.highlights && metadata.highlights.length > 0))) return true;
       if (name === 'metadata' && (metadata.video_metadata && Object.keys(metadata.video_metadata).length > 0)) return true;
       if (name === 'clipper' && (metadata.components?.clips_dir && metadata.clips?.length > 0)) return true;

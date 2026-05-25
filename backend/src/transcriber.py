@@ -1,7 +1,8 @@
 import logging
+import os
+
 import whisper
 from typing import List, Dict, Any, Optional
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class Transcriber:
     def transcribe(
         self,
         audio_file_path: str,
+        project_path: Optional[str] = None,
         language: Optional[str] = None,
         progress_callback: Any = None
     ) -> Dict[str, Any]:
@@ -29,17 +31,24 @@ class Transcriber:
         Returns:
             Dictionary with full text and word-level timestamps.
         """
-        if not os.path.exists(audio_file_path):
-            raise FileNotFoundError(f"Audio file not found: {audio_file_path}")
+        # If project_path is provided, resolve the audio file path relative to it
+        actual_path = audio_file_path
+        if project_path and not os.path.exists(actual_path):
+            potential_path = os.path.join(project_path, audio_file_path)
+            if os.path.exists(potential_path):
+                actual_path = potential_path
+        
+        if not os.path.exists(actual_path):
+            raise FileNotFoundError(f"Audio file not found: {actual_path}")
         
         if progress_callback:
             progress_callback(0.1)
         
-        logger.info(f"Transcribing {audio_file_path}")
+        logger.info(f"Transcribing {actual_path}")
         result = self.model.transcribe(
-            audio_file_path,
+            actual_path,
             language=language,
-            word_timestamps=True,
+            word_timestamps=True,  # Re-enabled, as CLI works with this
             no_speech_threshold=0.6,
             logprob_threshold=-1.0,
             condition_on_previous_text=False,

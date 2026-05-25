@@ -41,8 +41,11 @@ def handle_clipper(args):
     
     manager.save_project_metadata(args.project_id, metadata)
     
+    # Ensure absolute path is used for the clipper
+    input_video_path = str(project_path / metadata.original_file)
+    
     clipper = Clipper(
-        input_path=metadata.original_file,
+        input_path=input_video_path,
         output_dir=str(clips_dir),
         project_root=str(project_path.parent.parent / "root"),
         aspect_ratio=metadata.settings.aspect_ratio,
@@ -84,12 +87,13 @@ def handle_transcribe(args):
     metadata = manager.get_metadata(args.project_id)
     source_file = metadata.original_file
     
-    if not source_file or not Path(source_file).exists():
-        print(f"Error: Original source file not found for project {args.project_id}")
+    if not source_file:
+        print(f"Error: No source file defined for project {args.project_id}")
         return
 
     transcriber = Transcriber(model=args.model)
-    result = transcriber.transcribe(source_file, language=args.language)
+    # Pass the project path to resolve relative source_file paths
+    result = transcriber.transcribe(source_file, project_path=str(project_path), language=args.language)
     
     # Save files to project directory
     output_file1 = project_path / "transcription.txt"

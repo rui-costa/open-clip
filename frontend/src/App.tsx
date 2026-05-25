@@ -113,7 +113,7 @@ export default function App() {
       executePipelineStep(projectId!, step, action),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] });
-      refetchProcesses();
+      refetchProcesses(); // Immediate update on action
     }
   });
 

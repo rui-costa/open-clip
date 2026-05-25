@@ -81,8 +81,9 @@ class ProjectManager(BaseController):
                 raise FileNotFoundError(f"Source file not found: {file_path}")
             # Copy the file to the project directory, preserving the original filename
             source_filename = os.path.basename(file_path)
-            source_file_path = str(project_path / source_filename)
-            shutil.copy2(file_path, source_file_path)
+            # Store just the filename as the original_file, not the full absolute path
+            source_file_path = source_filename 
+            shutil.copy2(file_path, str(project_path / source_filename))
 
         metadata = ProjectMetadata(
             project_id=project_id,
@@ -130,10 +131,12 @@ class ProjectManager(BaseController):
 
     def update_step_status(self, project_id: str, step_name: str, status: Optional[str] = None, started_at: Optional[str] = None, ended_at: Optional[str] = None):
         metadata = self.get_metadata(project_id)
+        if not hasattr(metadata, 'step_statuses'):
+             metadata.step_statuses = {}
+        
         if status:
-            metadata.status = status
-        # Note: Dynamic status fields might need to be handled via a custom dictionary or adding them to the dataclass
-        # For now, let's keep it simple.
+            metadata.step_statuses[step_name] = status
+        
         self.save_project_metadata(project_id, metadata)
 
     def get_highlights(self, project_id: str):
