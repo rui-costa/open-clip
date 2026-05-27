@@ -2,8 +2,11 @@
   "project_id": "00000000-0000-0000-0000-000000000000",
   "name": "First Project",
   "created_at": "2026-05-16T20:44:37.173918",
-  "original_file": "/Users/ruicosta/Code/open-clip/projects/00000000-0000-0000-0000-000000000000/open-clip.mp4",
-  "highlights_file": null,
+  "files":{
+    "transcription_file": "/Users/ruicosta/Code/open-clip/projects/00000000-0000-0000-0000-000000000000/transcription.txt",
+    "word_map_file": "/Users/ruicosta/Code/open-clip/projects/00000000-0000-0000-0000-000000000000/word_map.csv",
+    "original_file": "/Users/ruicosta/Code/open-clip/projects/00000000-0000-0000-0000-000000000000/open-clip.mp4"
+  },
   "highlights": [
     {
       "highlight_text": "This is OpenClip, your open source clip editor.",
@@ -16,7 +19,6 @@
       "end": 4.5
     }
   ],
-  "transcription_file": "/Users/ruicosta/Code/open-clip/projects/00000000-0000-0000-0000-000000000000/transcription.txt",
   "video_metadata": {
     "components": [
       {
@@ -123,20 +125,8 @@
   },
   "settings": {
     "aspect_ratio": "9:16",
-    "resolution": null,
+    "resolution": "keep-original",
     "source_file": "open-clip.mp4"
-  },
-  "components": {
-    "word_map_file": "/Users/ruicosta/Code/open-clip/projects/00000000-0000-0000-0000-000000000000/word_map.csv",
-    "clips_dir": "/Users/ruicosta/Code/open-clip/projects/00000000-0000-0000-0000-000000000000/clips",
-    "total_expected_clips": 1,
-    "uploads": [
-      {
-        "clip_id": 0,
-        "youtube_video_id": "tV-a9S6GKzU",
-        "title": "This is OpenClip, your open source clip editor."
-      }
-    ]
   },
   "clips": [
     {
@@ -147,8 +137,5 @@
       "processed_end": 3.9,
       "text": "This is OpenClip, your open source clip editor."
     }
-  ],
-  "status": null,
-  "clipper_start": null,
-  "clipper_end": null
+  ]
 }
