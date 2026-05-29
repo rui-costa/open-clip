@@ -49,21 +49,21 @@ class TestSimpleHandler(unittest.TestCase):
             self.handler.do_OPTIONS()
 
     def test_do_options_cors(self):
-        self.simulate_request('OPTIONS', '/project/create', {})
+        self.simulate_request('OPTIONS', '/project/init', {})
         response = self.handler.wfile.getvalue().decode()
         self.assertIn('Access-Control-Allow-Headers: Content-Type, X-File-Name', response)
 
     def test_create_project_raw_upload(self):
+        # Update the test to match the actual API endpoint '/project/init'
         self.mock_project_manager.create_project.return_value = MagicMock(name="test-project-id")
         self.mock_project_manager.create_project.return_value.name = "test-project-id"
-        
+
         headers = {'Content-Length': '5', 'X-File-Name': 'test.mp4'}
         body = b"12345"
-        self.simulate_request('POST', '/project/create', headers, body)
+        self.simulate_request('POST', '/project/init', headers, body)
         response = self.handler.wfile.getvalue().decode()
         self.assertIn('"project_id": "test-project-id"', response)
         self.mock_project_manager.create_project.assert_called_once() # Ensure it's called
-
     def test_send_cors_error(self):
         self.handler.send_cors_error(400, "Bad Request")
         response = self.handler.wfile.getvalue().decode()
@@ -167,3 +167,21 @@ class TestSimpleHandler(unittest.TestCase):
         self.handler.path = f'/project/{project_id}'
         self.handler.do_DELETE()
         self.mock_project_manager.delete_project.assert_called_once_with(project_id)
+
+    def test_get_project_metadata(self):
+        project_id = "test_project_id"
+        from backend.src.models import ProjectMetadata
+        from datetime import datetime
+        mock_meta = ProjectMetadata(
+            project_id=project_id,
+            name="Test Project",
+            created_at=datetime.fromisoformat("2026-05-27T09:20:00")
+        )
+        self.mock_project_manager.get_metadata.return_value = mock_meta
+        
+        self.simulate_request('GET', f'/project/{project_id}', {})
+        response = self.handler.wfile.getvalue().decode()
+        self.assertIn('"project_id": "test_project_id"', response)
+        self.assertIn('"name": "Test Project"', response)
+        self.assertIn('"created_at": "2026-05-27T09:20:00"', response)
+        self.mock_project_manager.get_metadata.assert_called_once_with(project_id)

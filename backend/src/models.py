@@ -19,7 +19,6 @@ class ProjectMetadata:
     transcription_file: Optional[str] = None
     video_metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
     settings: ProjectSettings = field(default_factory=ProjectSettings)
-    components: Dict[str, str] = field(default_factory=dict)
     clips: List[Dict[str, Any]] = field(default_factory=list)
     status: Optional[str] = None
     step_statuses: Dict[str, str] = field(default_factory=dict)

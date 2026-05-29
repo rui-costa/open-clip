@@ -7,19 +7,29 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 class SettingsManager:
-    def __init__(self, config_path: str = "backend/config/settings.json"):
-        self.config_path = Path(config_path)
-        # Initialization logic separated for easier testing/mocking
+    SETTINGS_PATH = Path("backend/config/settings.json")
+
+    def __init__(self, config_path: str = None):
+        """Initialize SettingsManager.
+        The config_path argument is retained for backward compatibility but ignored.
+        The actual path used is the class attribute SETTINGS_PATH
+        """
         self.settings = self._initialize_and_load()
 
     def _initialize_and_load(self) -> Dict[str, Any]:
-        if not self.config_path.exists():
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        """Load settings from the JSON file, creating defaults if missing."""
+        path = self.SETTINGS_PATH
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
             defaults = {
                 "gemini_api_key": "",
                 "youtube_client_secrets": None,
                 "theme": "light",
-                "pipeline_defaults": {}
+                "pipeline_defaults": {},
+                "video_defaults": {
+                    "resolution": "keep original",
+                    "aspect_ratio": "keep original",
+                },
             }
             self._save_settings(defaults)
             return defaults
@@ -27,23 +37,27 @@ class SettingsManager:
 
     def _load_settings(self) -> Dict[str, Any]:
         """Loads settings from the JSON file."""
-        if not self.config_path.exists() or self.config_path.stat().st_size == 0:
+        path = self.SETTINGS_PATH
+        if not path.exists() or path.stat().st_size == 0:
             return {}
         try:
-            with open(self.config_path, "r") as f:
+            with open(path, "r") as f:
                 content = json.load(f)
                 return content if content else {}
         except json.JSONDecodeError as e:
-            logger.error(f"Error loading settings from {self.config_path}: {e}")
+            logger.error(f"Error loading settings from {path}: {e}")
             return {}
         except Exception as e:
-            logger.error(f"Unexpected error loading settings from {self.config_path}: {e}")
+            logger.error(f"Unexpected error loading settings from {path}: {e}")
             return {}
 
     def _save_settings(self, settings: Dict[str, Any]):
         """Saves settings to the JSON file."""
+        path = self.SETTINGS_PATH
+        # Ensure parent directories exist
+        path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self.config_path, "w") as f:
+            with open(path, "w") as f:
                 json.dump(settings, f, indent=2)
         except Exception as e:
             logger.error(f"Error saving settings: {e}")
@@ -66,4 +80,9 @@ class SettingsManager:
         """Returns all current settings."""
         return self.settings
 
+    def get_settings_path(self) -> Path:
+        """Utility for tests to retrieve the actual settings file path."""
+        return self.SETTINGS_PATH
+
+# Global instance used by the codebase
 settings_manager = SettingsManager()

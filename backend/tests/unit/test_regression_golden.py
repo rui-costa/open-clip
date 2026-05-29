@@ -4,7 +4,7 @@ import shutil
 import json
 from pathlib import Path
 from datetime import datetime
-from backend.src.manager import ProjectManager
+from backend.src.manager import ProjectRepository as ProjectManager
 from backend.src.models import ProjectMetadata
 
 GOLDEN_PROJECT_ID = "00000000-0000-0000-0000-000000000000"
@@ -129,7 +129,8 @@ def test_golden_get_component(manager):
     metadata = manager.get_metadata(GOLDEN_PROJECT_ID)
     component_name = "word_map_file"
     
-    if component_name in metadata.components:
+    components = metadata.video_metadata.get("components", {})
+    if component_name in components:
         # Since it's a CSV in the golden project but get_component uses json.load,
         # this might actually fail if it's not JSON. 
         # Let's check how get_component is implemented.
