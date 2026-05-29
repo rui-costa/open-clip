@@ -9,7 +9,7 @@ from pathlib import Path
 import threading
 from dataclasses import asdict
 
-from backend.src.manager import ProjectManager
+from backend.src.manager import ProjectRepository
 from backend.src.exceptions import ProjectNotFoundError
 from backend.src.orchestrator import PipelineOrchestrator
 from backend.src.settings_manager import settings_manager
@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 # Track active subprocesses (shared state)
 active_processes = {}
 
-# Initialize ProjectManager and PipelineOrchestrator
-project_manager = ProjectManager()
+# Initialize ProjectRepository and PipelineOrchestrator
+project_manager = ProjectRepository()
 pipeline_orchestrator = PipelineOrchestrator(active_processes=active_processes)
 
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -67,10 +67,8 @@ class SimpleHandler(BaseHTTPRequestHandler):
             project_ids = project_manager.list_projects()
             for project_id in project_ids:
                 try:
-                    metadata = project_manager.get_metadata(project_id)
-                    meta_dict = asdict(metadata)
-                    meta_dict['created_at'] = metadata.created_at.isoformat()
-                    all_projects_metadata.append(meta_dict)
+                    project = project_manager.get_project(project_id)
+                    all_projects_metadata.append(project.to_dict())
                 except ProjectNotFoundError:
                     logger.warning(f"Project metadata not found for ID: {project_id}. Skipping.")
                     continue
@@ -90,7 +88,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
             try:
                 project_path = project_manager.get_project_path(project_id)
                 file_path = project_path / relative_path
-                # Validate the final file path to prevent traversal via relative_path
                 project_manager._validate_path(file_path)
 
                 if file_path.exists() and file_path.is_file():
@@ -147,19 +144,20 @@ class SimpleHandler(BaseHTTPRequestHandler):
             project_id = parts[2]
             clip_id = parts[4]
             try:
-                metadata = project_manager.get_metadata(project_id)
+                project = project_manager.get_project(project_id)
                 clip_idx = int(clip_id)
                 clip_filename = f"clip_{clip_idx:03d}.mp4"
-                clip_path = project_manager.get_clip_video_path(project_id, clip_filename)
-                from backend.src.uploader import YoutubeUploader
+                clip_path = project_manager.get_project_path(project_id) / "clips" / clip_filename
+                
+                from backend.src.services.uploader import YoutubeUploader
                 with open("backend/youtube_credentials/client_secrets.json", "r") as f:
                     client_secrets = json.load(f)
                 uploader = YoutubeUploader("backend/youtube_credentials", client_secrets)
-                clip_text = metadata.highlights[clip_idx].get("text", "AI Generated Clip")
+                clip_text = project.highlights[clip_idx].text
                 result = uploader.upload_video(
-                    file_path=clip_path,
+                    file_path=str(clip_path),
                     title=clip_text[:90],
-                    description=f"Generated from project {metadata.name}"
+                    description=f"Generated from project {project.name}"
                 )
                 self.send_response(200)
                 self.send_header('Access-Control-Allow-Origin', '*')
@@ -171,17 +169,17 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 self.send_cors_error(500, f"Upload failed: {str(e)}")
         elif self.path.startswith('/project/'):
             project_id = self.path.split('/')[-1]
-            project_path = Path("projects") / project_id
-            metadata_file = project_path / "metadata.json"
-            if metadata_file.exists():
+            try:
+                project = project_manager.get_project(project_id)
                 self.send_response(200)
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
-                with open(metadata_file, 'r') as f:
-                    self.wfile.write(f.read().encode())
-            else:
+                self.wfile.write(json.dumps(project.to_dict()).encode())
+            except ProjectNotFoundError:
                 self.send_error(404)
+            except Exception as e:
+                self.send_cors_error(500, str(e))
         else:
             self.send_error(404)
 
@@ -213,55 +211,107 @@ class SimpleHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({"error": message}).encode())
 
     def do_POST(self):
-        if self.path == '/project/create':
+        if self.path == '/project/init':
             try:
-                filename = self.headers.get('X-File-Name')
-                if not filename:
-                    self.send_cors_error(400, "Missing 'X-File-Name' header")
-                    return
                 content_length = int(self.headers.get('Content-Length', 0))
-                fd, temp_path = tempfile.mkstemp(suffix=os.path.splitext(filename)[1])
-                try:
-                    with os.fdopen(fd, 'wb') as temp_file:
-                        remaining = content_length
-                        while remaining > 0:
-                            chunk_size = min(remaining, 65536)
-                            data_chunk = self.rfile.read(chunk_size)
-                            if not data_chunk: break
-                            temp_file.write(data_chunk)
-                            remaining -= len(data_chunk)
-                    temp_dir = os.path.dirname(temp_path)
-                    final_temp_path = os.path.join(temp_dir, filename)
-                    if os.path.exists(final_temp_path):
-                        final_temp_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{filename}")
-                    os.rename(temp_path, final_temp_path)
-                    project_path = project_manager.create_project(file_path=final_temp_path)
-                    project_id = project_path.name
-                    os.remove(final_temp_path)
+                post_data = self.rfile.read(content_length)
+                
+                # Check if it's the old-style raw upload test, which sends raw bytes with X-File-Name
+                is_raw_upload = False
+                filename = self.headers.get('X-File-Name')
+                if filename:
+                    is_raw_upload = True
+                
+                if is_raw_upload:
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
+                        temp_path = tmp.name
+                        tmp.write(post_data)
+                    
+                    project = project_manager.create_project(name=filename, file_path=temp_path)
+                    project_id = project.project_id
+                    os.remove(temp_path)
+                    
                     self.send_response(200)
                     self.send_header('Access-Control-Allow-Origin', '*')
                     self.send_header('Content-type', 'application/json')
                     self.end_headers()
                     self.wfile.write(json.dumps({"project_id": project_id}).encode())
-                except Exception as e:
-                    if os.path.exists(temp_path): os.remove(temp_path)
-                    elif 'final_temp_path' in locals() and os.path.exists(final_temp_path): os.remove(final_temp_path)
-                    raise e
+                    return
+                else:
+                    try:
+                        data = json.loads(post_data.decode('utf-8'))
+                    except Exception:
+                        self.send_cors_error(400, "Invalid JSON body for project/init")
+                        return
+                    
+                    filename = data.get('filename', 'untitled')
+                    project = project_manager.create_project(name=filename)
+                    project_id = project.project_id
+                    
+                    self.send_response(200)
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"project_id": project_id}).encode())
+                    return
             except Exception as e:
                 logger.error(f"Error during project creation: {e}")
-                self.send_cors_error(500, f"Internal Server Error: {str(e)}")
+                self.send_cors_error(500, str(e))
                 return
+        
+        # 2. Upload File (Binary Stream)
+        elif self.path.startswith('/project/upload/'):
+            try:
+                project_id = self.path.split('/')[-1]
+                project = project_manager.get_project(project_id)
+                filename = project.name
+                ext = Path(filename).suffix if filename else ".mp4"
+                if not ext:
+                    ext = ".mp4"
+                
+                project_path = project_manager.get_project_path(project_id)
+                new_filename = f"original{ext}"
+                file_path = project_path / new_filename
+                
+                content_length = int(self.headers.get('Content-Length', 0))
+                with open(file_path, 'wb') as f:
+                    remaining = content_length
+                    while remaining > 0:
+                        chunk_size = min(remaining, 65536)
+                        data_chunk = self.rfile.read(chunk_size)
+                        if not data_chunk: break
+                        f.write(data_chunk)
+                        remaining -= len(data_chunk)
+                
+                # Update the metadata
+                project.files.original_file = str(file_path)
+                project.settings.source_file = new_filename
+                project_manager.save_project(project)
+                
+                self.send_response(200)
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                return
+            except Exception as e:
+                logger.error(f"Error during file upload: {e}")
+                self.send_cors_error(500, str(e))
+                return
+
+        # 3. Handle existing API endpoints
         content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length)
         try:
-            post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))
         except (json.JSONDecodeError, UnicodeDecodeError):
             self.send_cors_error(400, "Invalid JSON body")
             return
+            
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Content-type', 'application/json')
         self.end_headers()
+        
         if self.path == '/settings':
             try:
                 settings_data = data.get('settings', {})
@@ -303,7 +353,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 if key in pipeline_orchestrator.active_processes:
                     self.wfile.write(json.dumps({"status": "already_running"}).encode())
                     return
-                threading.Thread(target=pipeline_orchestrator._run_single_step, args=(project_id, step)).start()
+                threading.Thread(target=pipeline_orchestrator.run_step, args=(project_id, step)).start()
                 self.wfile.write(json.dumps({"status": "started"}).encode())
             elif action == 'STOP':
                 if key in pipeline_orchestrator.active_processes:
