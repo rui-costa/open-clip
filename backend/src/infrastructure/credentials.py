@@ -3,17 +3,24 @@ import json
 from typing import Optional, Dict, Any
 
 class LocalCredentialProvider:
-    def __init__(self, credentials_dir: str):
-        self.credentials_dir = credentials_dir
-        os.makedirs(self.credentials_dir, exist_ok=True)
-        self.credential_file = os.path.join(self.credentials_dir, "youtube_credentials.json")
+    def __init__(self, secrets_dir: str = "backend/config"):
+        self.secrets_file = os.path.join(secrets_dir, "secrets.json")
 
-    def load(self, name: str) -> Optional[Dict[str, Any]]:
-        if os.path.exists(self.credential_file):
-            with open(self.credential_file, "r") as f:
-                return json.load(f)
-        return None
+    def load_all(self) -> Dict[str, Any]:
+        if not os.path.exists(self.secrets_file):
+            return {}
+        with open(self.secrets_file, "r") as f:
+            return json.load(f)
 
-    def save(self, name: str, data: Dict[str, Any]) -> None:
-        with open(self.credential_file, "w") as f:
-            json.dump(data, f, indent=4)
+    def load(self, key: str) -> Optional[Any]:
+        secrets = self.load_all()
+        return secrets.get(key)
+
+    def save(self, key: str, value: Any) -> None:
+        if not os.path.exists(self.secrets_file):
+            raise FileNotFoundError(f"Secrets file not found: {self.secrets_file}")
+        
+        secrets = self.load_all()
+        secrets[key] = value
+        with open(self.secrets_file, "w") as f:
+            json.dump(secrets, f, indent=4)

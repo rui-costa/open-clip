@@ -22,8 +22,6 @@ class SettingsManager:
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             defaults = {
-                "gemini_api_key": "",
-                "youtube_client_secrets": None,
                 "theme": "light",
                 "pipeline_defaults": {},
                 "video_defaults": {

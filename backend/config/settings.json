@@ -1,6 +1,6 @@
 {
-  "gemini_api_key": "CHANGE_ME",
   "theme": "dark",
   "pipeline_defaults": {},
-  "youtube_client_secrets": {}
+  "model": "base",
+  "new_key": "value"
 }
