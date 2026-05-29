@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "summary": {"type": "string"},
+          "post_for_x": {"type": "string"},
+          "post_for_reddit": {"type": "string"},
+          "post_for_linkedin": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "top_recommendations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {"type": "integer"},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  }
+}
