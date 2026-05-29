@@ -12,6 +12,7 @@ Identify 7 to 15 high-impact, viral moments from the provided TRANSCRIPT_TEXT.
 - Each clip between 75 and 350 s (inclusive).
 - Use silence moments for natural cuts; never cut in the middle of a word or phrase.
 - STRICTLY FORBIDDEN to use time formats other than absolute seconds.
+- If the clip is too small, create a single highlight with the clip
 
 ## STRICT EXCLUSIONS:
 - No generic intros/outros
