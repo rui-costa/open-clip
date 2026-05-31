@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSettings, updateSettings } from '../api';
+import { getSettings, updateSettings, type SettingsResponse } from '../api';
 import { useDebounce } from '../hooks/useDebounce';
 
 interface SettingsPageProps {
@@ -10,9 +10,9 @@ interface SettingsPageProps {
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) => {
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<SettingsResponse>({
     queryKey: ['settings'],
-    queryFn: getSettings,
+    queryFn: getSettings as () => Promise<SettingsResponse>,
   });
 
   const updateMutation = useMutation({
@@ -57,8 +57,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
 
   if (isLoading) return <div style={{ padding: 'var(--space-md)', fontWeight: 'bold', textTransform: 'uppercase' }}>Loading settings...</div>;
 
-  const settings = data?.settings || {};
-  const pipelineConfig = data?.pipeline_config || {};
+  const settings = data?.settings || { gemini_api_key: '', youtube_client_secrets: null, theme: 'light' as const, video_defaults: { resolution: 'keep original', aspect_ratio: 'keep original' } };
+  const pipelineConfig = data?.pipeline_config || { execution_order: [], steps: {} };
 
   const getSaveStatus = () => {
     if (updateMutation.isError) return { text: 'ERROR SAVING!', color: 'var(--error)' };
@@ -214,6 +214,31 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
               Invalid JSON file content.
             </span>
           )}
+        </div>
+      </section>
+
+      {/* Video Defaults Section */}
+      <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+        <h2 style={{ margin: 0, fontSize: '1.2rem', textTransform: 'uppercase', fontWeight: 900 }}>Video Defaults</h2>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+          <label style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Resolution:</label>
+          <select 
+            value={settings.video_defaults?.resolution || 'keep original'}
+            onChange={(e) => updateMutation.mutate({ settings: { ...settings, video_defaults: { ...settings.video_defaults, resolution: e.target.value } } })}
+            style={inputStyle}
+          >
+            {['keep original', '1080p', '720p', '480p'].map(opt => <option key={opt} value={opt}>{opt.toUpperCase()}</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+          <label style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Aspect Ratio:</label>
+          <select 
+            value={settings.video_defaults?.aspect_ratio || 'keep original'}
+            onChange={(e) => updateMutation.mutate({ settings: { ...settings, video_defaults: { ...settings.video_defaults, aspect_ratio: e.target.value } } })}
+            style={inputStyle}
+          >
+            {['keep original', '16:9', '9:16', '1:1'].map(opt => <option key={opt} value={opt}>{opt}</option>)}
+          </select>
         </div>
       </section>
 
