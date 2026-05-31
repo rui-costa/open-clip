@@ -20,17 +20,24 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [resolution, setResolution] = useState('keep original');
   const [aspectRatio, setAspectRatio] = useState('keep original');
+  const [availableResolutions, setAvailableResolutions] = useState<string[]>(['keep original']);
+  const [availableAspectRatios, setAvailableAspectRatios] = useState<string[]>(['keep original']);
 
   useEffect(() => {
-    fetch('http://localhost:8000/settings')
-      .then(res => res.json())
-      .then(data => {
-        if (data.settings?.video_defaults) {
-          setResolution(data.settings.video_defaults.resolution);
-          setAspectRatio(data.settings.video_defaults.aspect_ratio);
-        }
-      })
-      .catch(err => console.error('Failed to fetch settings, using defaults', err));
+    Promise.all([
+      fetch('http://localhost:8000/settings').then(res => res.json()),
+      fetch('http://localhost:8000/resolutions').then(res => res.json()),
+      fetch('http://localhost:8000/aspect_ratios').then(res => res.json())
+    ])
+    .then(([settingsData, resolutionsData, aspectRatiosData]) => {
+      if (settingsData.settings?.video_defaults) {
+        setResolution(settingsData.settings.video_defaults.resolution);
+        setAspectRatio(settingsData.settings.video_defaults.aspect_ratio);
+      }
+      setAvailableResolutions(['keep original', ...Object.keys(resolutionsData)]);
+      setAvailableAspectRatios(['keep original', ...Object.keys(aspectRatiosData)]);
+    })
+    .catch(err => console.error('Failed to fetch config, using defaults', err));
   }, []);
 
   useEffect(() => {
@@ -89,7 +96,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
       onDragLeave={(e) => { e.preventDefault(); setDragActive(false); }}
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
-      onClick={() => !isPending && fileInputRef.current?.click()}
+      onClick={() => !isPending && !file && fileInputRef.current?.click()}
     >
       <input 
         ref={fileInputRef} 
@@ -189,14 +196,14 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
           <div style={{ display: 'flex', gap: 'var(--space-md)', fontSize: '0.9rem', fontWeight: 'bold' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'left' }}>
               <label>Resolution:</label>
-              <select value={resolution} onChange={(e) => setResolution(e.target.value)} style={{ padding: '4px' }}>
-                {['keep original', '1080p', '720p', '480p'].map(opt => <option key={opt} value={opt}>{opt.toUpperCase()}</option>)}
+              <select value={resolution} onChange={(e) => { e.stopPropagation(); setResolution(e.target.value); }} style={{ padding: '4px' }}>
+                {availableResolutions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
               </select>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'left' }}>
               <label>Aspect Ratio:</label>
-              <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} style={{ padding: '4px' }}>
-                {['keep original', '16:9', '9:16', '1:1'].map(opt => <option key={opt} value={opt}>{opt}</option>)}
+              <select value={aspectRatio} onChange={(e) => { e.stopPropagation(); setAspectRatio(e.target.value); }} style={{ padding: '4px' }}>
+                {availableAspectRatios.map(opt => <option key={opt} value={opt}>{opt}</option>)}
               </select>
             </div>
           </div>

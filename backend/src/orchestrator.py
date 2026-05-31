@@ -46,6 +46,9 @@ class PipelineOrchestrator:
                 asyncio.run(service.execute(project))
             else:
                 service.execute(project)
+            
+            if project.step_statuses.get(step_name) == "error":
+                raise RuntimeError(f"Service {step_name} failed.")
 
     def run_step(self, project_id: str, step_name: str):
         """Triggers a step in the background."""
@@ -63,29 +66,32 @@ class PipelineOrchestrator:
             if hasattr(service, 'reset_metadata'):
                 service.reset_metadata(project)
 
-        import concurrent.futures
-
         def pipeline_runner():
             steps = self.pipeline_config['steps']
-            completed_steps = set()
-            lock = threading.Lock()
+            while True:
+                project.load(project.project_id)
 
-            def run_step_task(step_name):
-                # Pass the existing project instance to avoid concurrent load conflicts
-                self._exec_service(project, step_name)
-                with lock:
-                    completed_steps.add(step_name)
+                # Check for failure in pipeline
+                if any(project.step_statuses.get(s) == "error" for s in steps):
+                    break
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = {}
-                while len(completed_steps) < len(steps):
-                    for step_name, config in steps.items():
-                        if step_name not in futures and step_name not in completed_steps:
-                            dependencies = config.get('depends_on', [])
-                            if all(dep in completed_steps for dep in dependencies):
-                                futures[step_name] = executor.submit(run_step_task, step_name)
-                    
-                    time.sleep(0.1) # Avoid tight loop
+                # Check if pipeline finished
+                if all(project.step_statuses.get(s) == "completed" for s in steps):
+                    break
+
+                for step_name, config in steps.items():
+                    # Only trigger if status is not started
+                    if project.step_statuses.get(step_name) not in [None, "todo", "pending"]:
+                        continue
+
+                    # Strict dependency check
+                    dependencies = config.get('depends_on', [])
+                    if all(project.step_statuses.get(dep) == "completed" for dep in dependencies):
+                        # Only trigger auto-run
+                        if config.get('auto_run', True):
+                            self.run_step(project.project_id, step_name)
+
+                time.sleep(1.0)
 
         thread = threading.Thread(target=pipeline_runner)
         with self._lock:

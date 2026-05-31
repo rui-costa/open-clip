@@ -88,7 +88,10 @@ export default function App() {
     mutationFn: (vars: { file: File, resolution: string, aspectRatio: string }) => 
       createProject(vars.file, vars.resolution, vars.aspectRatio, setUploadProgress),
     onSuccess: (data) => {
-      // In the new API design, data contains the project_id returned by init
+      // Invalidate project list to reflect new creation immediately
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      // Pre-invalidate potential new project metadata to ensure clean fetch
+      queryClient.invalidateQueries({ queryKey: ['project', data.project_id] });
       // The file upload is now handled inside api.ts, so this is clean.
       navigate(`/project/${data.project_id}`);
     },

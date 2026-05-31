@@ -60,25 +60,25 @@ class OpenCVVideoEngine(VideoEngine):
             clip = video.subclipped(start, end)
             
             # Resolve Dimensions
-            if aspect_ratio == "keep-original":
+            if aspect_ratio == "keep original":
                 ar_ratio = clip.w / clip.h
             else:
                 ar_val = ar_map.get(aspect_ratio, aspect_ratio)
                 ar_w, ar_h = map(int, ar_val.split(':'))
                 ar_ratio = ar_w / ar_h
             
-            if resolution == "keep-original":
+            if resolution == "keep original":
                 target_w, target_h = clip.w, clip.h
             else:
                 target_res = res_map.get(resolution, resolution)
                 target_w, target_h = map(int, target_res.split('x'))
             
-            # If resolution keep-original but AR changed, adjust target dims
-            if resolution == "keep-original" and aspect_ratio != "keep-original":
+            # If resolution keep original but AR changed, adjust target dims
+            if resolution == "keep original" and aspect_ratio != "keep original":
                 if (ar_ratio < 1) != (clip.w / clip.h < 1):
                     target_w, target_h = clip.h, clip.w
                 target_w = int(target_h * ar_ratio)
-            elif aspect_ratio != "keep-original":
+            elif aspect_ratio != "keep original":
                 # Ensure resolution matches AR if AR is provided
                 if abs((target_w / target_h) - ar_ratio) > 0.01:
                     if target_w / target_h > ar_ratio:

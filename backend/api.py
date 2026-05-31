@@ -175,8 +175,18 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     
         self.send_json_response(statuses)
 
+    def handle_get_aspect_ratios(self):
+        with open("backend/config/aspect_ratios.json", "r") as f:
+            self.send_json_response(json.load(f))
+
+    def handle_get_resolutions(self):
+        with open("backend/config/resolutions.json", "r") as f:
+            self.send_json_response(json.load(f))
+
     def do_GET(self):
         if self.path == '/health': self.handle_get_health()
+        elif self.path == '/resolutions': self.handle_get_resolutions()
+        elif self.path == '/aspect_ratios': self.handle_get_aspect_ratios()
         elif self.path == '/active_processes': self.handle_get_processes()
         elif self.path == '/pipeline/config': self.handle_get_config()
         elif self.path == '/settings': self.handle_get_settings()

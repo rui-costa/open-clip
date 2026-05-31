@@ -15,6 +15,24 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
     queryFn: getSettings as () => Promise<SettingsResponse>,
   });
 
+  const { data: resolutionsData } = useQuery({
+    queryKey: ['resolutions'],
+    queryFn: async () => {
+      const res = await fetch('http://localhost:8000/resolutions');
+      const data = await res.json();
+      return Object.keys(data);
+    },
+  });
+
+  const { data: aspectRatiosData } = useQuery({
+    queryKey: ['aspectRatios'],
+    queryFn: async () => {
+      const res = await fetch('http://localhost:8000/aspect_ratios');
+      const data = await res.json();
+      return Object.keys(data);
+    },
+  });
+
   const updateMutation = useMutation({
     mutationFn: updateSettings,
     onSuccess: () => {
@@ -227,7 +245,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
             onChange={(e) => updateMutation.mutate({ settings: { ...settings, video_defaults: { ...settings.video_defaults, resolution: e.target.value } } })}
             style={inputStyle}
           >
-            {['keep original', '1080p', '720p', '480p'].map(opt => <option key={opt} value={opt}>{opt.toUpperCase()}</option>)}
+            <option value="keep original">keep original</option>
+            {resolutionsData?.map(opt => <option key={opt} value={opt}>{opt.toUpperCase()}</option>)}
           </select>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
@@ -237,7 +256,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
             onChange={(e) => updateMutation.mutate({ settings: { ...settings, video_defaults: { ...settings.video_defaults, aspect_ratio: e.target.value } } })}
             style={inputStyle}
           >
-            {['keep original', '16:9', '9:16', '1:1'].map(opt => <option key={opt} value={opt}>{opt}</option>)}
+            <option value="keep original">keep original</option>
+            {aspectRatiosData?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
           </select>
         </div>
       </section>
