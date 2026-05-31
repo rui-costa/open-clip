@@ -41,7 +41,11 @@ class PipelineOrchestrator:
         service = self.services.get(step_name)
         if service:
             import asyncio
-            asyncio.run(service.execute(project))
+            import inspect
+            if inspect.iscoroutinefunction(service.execute):
+                asyncio.run(service.execute(project))
+            else:
+                service.execute(project)
 
     def run_step(self, project_id: str, step_name: str):
         """Triggers a step in the background."""
