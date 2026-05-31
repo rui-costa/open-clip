@@ -10,7 +10,7 @@ export const PongGame: React.FC<{ active: boolean }> = ({ active }) => {
   const [playerY, setPlayerY] = useState(150);
   const [aiY, setAiY] = useState(150);
   const [score, setScore] = useState({ player: 0, ai: 0 });
-  const requestRef = useRef<number>();
+  const requestRef = useRef<number | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
