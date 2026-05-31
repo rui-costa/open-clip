@@ -15,7 +15,7 @@ interface ProjectDetailProps {
   onDeleteProject: () => void;
 }
 
-export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipelineConfig, activeProcesses, onExecuteAction, onDeleteProject }) => {
+export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipelineConfig, activeProcesses, onExecuteAction, onDeleteClip, onDeleteProject }) => {
   const sourceVideoRef = useRef<HTMLVideoElement>(null);
   const [showMetadata, setShowMetadata] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -210,7 +210,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
         <ClipManager 
           projectId={displayMetadata.project_id} 
           clips={displayMetadata.clips || []} 
-          onDeleteClip={onDeleteProject} 
+          onDeleteClip={onDeleteClip} 
           isLoading={activeProcesses.includes(`${displayMetadata.project_id}_clipper`)}
           onSyncSource={syncSourceVideo}
           onPauseSource={pauseSourceVideo}

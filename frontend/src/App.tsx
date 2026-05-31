@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createProject, getProjects, getProjectMetadata, executePipelineStep, getPipelineConfig, getActiveProcesses, deleteProject, type ProjectMetadata } from './api';
+import { createProject, getProjects, getProjectMetadata, executePipelineStep, getPipelineConfig, getActiveProcesses, deleteProject, deleteClip, type ProjectMetadata } from './api';
 import { ProjectDetail } from './components/ProjectDetail/ProjectDetail';
 import { ClipDetail } from './components/ClipManagement/ClipDetail';
 import { ProjectHistory } from './components/History/ProjectHistory';
@@ -113,6 +113,16 @@ export default function App() {
       setConfirmDeleteProject({ isOpen: false, projectId: '', projectName: '' });
     }
   });
+
+  const deleteClipMutation = useMutation({
+    mutationFn: ({ projectId, clipIndex }: { projectId: string, clipIndex: number }) => deleteClip(projectId, clipIndex),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['projectMetadata', projectId] });
+    },
+    onError: (error: any) => console.error(error)
+  });
+
 
   const stepMutation = useMutation({
     mutationFn: ({ action, step }: { action: 'START' | 'STOP', step: string }) => 
@@ -235,7 +245,7 @@ export default function App() {
                     pipelineConfig={pipelineConfig || { execution_order: [] }}
                     activeProcesses={activeProcesses}
                     onExecuteAction={(action, step) => stepMutation.mutate({ action, step: step === 'all' ? 'all' : step })} 
-                    onDeleteClip={(index) => console.log('Deleting clip:', index)}
+                    onDeleteClip={(index) => deleteClipMutation.mutate({ projectId: projectId!, clipIndex: index })}
                     onDeleteProject={() => setConfirmDeleteProject({ 
                       isOpen: true, 
                       projectId: projectId!, 

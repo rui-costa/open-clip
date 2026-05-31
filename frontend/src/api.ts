@@ -142,6 +142,12 @@ export const uploadClip = async (projectId: string, clipIndex: number) => {
   });
 };
 
+export const deleteClip = async (projectId: string, clipIndex: number) => {
+  const response = await fetch(`${BASE_URL}/project/${projectId}/clip/${clipIndex}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error('Failed to delete clip');
+  return { status: 'deleted' };
+};
+
 export const deleteProject = async (projectId: string) => {
   // fetch delete doesn't return data usually, but this satisfies the existing signature
   const response = await fetch(`${BASE_URL}/project/${projectId}`, { method: 'DELETE' });

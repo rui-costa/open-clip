@@ -270,7 +270,17 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
     # DELETE Handlers
     def do_DELETE(self):
-        if self.path.startswith('/project/'):
+        if self.path.startswith('/project/') and '/clip/' in self.path:
+            parts = self.path.split('/')
+            project_id = parts[2]
+            clip_index = int(parts[4])
+            try:
+                project = Project(project_id)
+                project.delete_clip(clip_index)
+                self.send_json_response({"status": "deleted"})
+            except Exception as e:
+                self.send_cors_error(500, f"Failed to delete clip: {str(e)}")
+        elif self.path.startswith('/project/'):
             project_id = self.path.split('/')[-1]
             if delete_project(project_id):
                 self.send_json_response({"status": "deleted"})
