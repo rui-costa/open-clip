@@ -3,9 +3,9 @@
   "name": "First Project",
   "created_at": "2026-05-16T20:44:37.173918",
   "files":{
-    "transcription_file": "/Users/ruicosta/Code/open-clip/projects/00000000-0000-0000-0000-000000000000/transcription.txt",
-    "word_map_file": "/Users/ruicosta/Code/open-clip/projects/00000000-0000-0000-0000-000000000000/word_map.csv",
-    "original_file": "/Users/ruicosta/Code/open-clip/projects/00000000-0000-0000-0000-000000000000/open-clip.mp4"
+    "transcription_file": "transcription.txt",
+    "word_map_file": "word_map.csv",
+    "original_file": "original.mp4"
   },
   "highlights": [
     {
