@@ -1,15 +1,15 @@
 import React from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { getProjectMetadata } from '../../api';
+import { getProjectMetadata, type ProjectMetadata } from '../../api';
 import { ClipActions } from './ClipActions';
 
 export const ClipDetail: React.FC = () => {
   const { id: projectId, clipIndex } = useParams<{ id: string; clipIndex: string }>();
   
-  const { data: projectMetadata, isLoading, error } = useQuery({
+  const { data: projectMetadata, isLoading, error } = useQuery<ProjectMetadata>({
     queryKey: ['project', projectId],
-    queryFn: () => getProjectMetadata(projectId!),
+    queryFn: () => getProjectMetadata(projectId!) as Promise<ProjectMetadata>,
     enabled: !!projectId,
   });
 

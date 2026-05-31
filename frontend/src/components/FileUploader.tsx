@@ -1,42 +1,44 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { PongGame } from './PongGame';
 
-const UPLOAD_VERBS = [
-  "Uploading...",
-  "Moving data...",
-  "Securing packets...",
-  "Transferring...",
-  "Writing to disk..."
-];
+import { getSpinnerVerb } from '../utils/spinnerVerbs';
 
-const PROCESSING_VERBS = [
-  "Transcribing...",
-  "Analyzing Audio...",
-  "Extracting Highlights...",
-  "Generating Clips...",
-  "Finalizing Project..."
-];
+// ... (remove UPLOAD_VERBS and PROCESSING_VERBS arrays)
 
 interface FileUploaderProps {
   onFileSelect: (file: File) => void;
   isPending: boolean;
   uploadProgress: number;
-  onSubmit: () => void;
+  onSubmit: (resolution: string, aspectRatio: string) => void;
 }
 
 export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPending, uploadProgress, onSubmit }) => {
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [verbIndex, setVerbIndex] = useState(0);
+  const [spinnerVerb, setSpinnerVerb] = useState(getSpinnerVerb());
   const [showGame, setShowGame] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [resolution, setResolution] = useState('keep original');
+  const [aspectRatio, setAspectRatio] = useState('keep original');
+
+  useEffect(() => {
+    fetch('http://localhost:8000/settings')
+      .then(res => res.json())
+      .then(data => {
+        if (data.settings?.video_defaults) {
+          setResolution(data.settings.video_defaults.resolution);
+          setAspectRatio(data.settings.video_defaults.aspect_ratio);
+        }
+      })
+      .catch(err => console.error('Failed to fetch settings, using defaults', err));
+  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setVerbIndex((prev) => (prev + 1) % (uploadProgress < 100 ? UPLOAD_VERBS.length : PROCESSING_VERBS.length));
+      setSpinnerVerb(getSpinnerVerb());
     }, 2500);
     return () => clearInterval(interval);
-  }, [uploadProgress]);
+  }, []);
 
   useEffect(() => {
     if (!isPending) setShowGame(false);
@@ -122,18 +124,18 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
                 animation: 'spin 1s linear infinite' 
             }} />
             <h2 style={{ fontSize: '2rem', textTransform: 'uppercase', margin: '10px 0', color: 'var(--text)' }}>
-                {uploadProgress < 100 ? UPLOAD_VERBS[verbIndex] : PROCESSING_VERBS[verbIndex]}
+                {spinnerVerb}
             </h2>
             <p style={{ fontSize: '1.2rem', marginBottom: 'var(--space-sm)', color: 'var(--text)' }}>
-                {uploadProgress < 100 ? `${uploadProgress}% Complete` : 'Processing...'}
+                {uploadProgress < 99 ? `${uploadProgress}% Complete` : 'Almost finished...'}
             </p>
-            {uploadProgress < 100 && (
+            {uploadProgress < 99 && (
                 <div style={{ width: '300px', height: '20px', background: 'var(--border)', borderRadius: '10px', overflow: 'hidden' }}>
                 <div style={{ width: `${uploadProgress}%`, height: '100%', background: 'var(--accent)', transition: 'width 200ms ease-out' }} />
                 </div>
             )}
             <p style={{ color: 'var(--text-muted)', marginTop: '10px' }}>
-                {uploadProgress < 100 ? 'Uploading heavy file, please do not close this window.' : 'Backend processing in progress.'}
+                {uploadProgress < 99 ? 'Uploading heavy file, please do not close this window.' : 'Finalizing project structure...'}
             </p>
             {!showGame && (
                 <p style={{ fontSize: '0.9rem', color: 'var(--accent)', fontStyle: 'italic', marginTop: '10px' }}>
@@ -184,10 +186,25 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
             <span style={{ fontSize: '0.8rem', fontWeight: 900, textTransform: 'uppercase' }}>Selected File</span>
             <h3 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900 }}>{file.name}</h3>
           </div>
+          <div style={{ display: 'flex', gap: 'var(--space-md)', fontSize: '0.9rem', fontWeight: 'bold' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'left' }}>
+              <label>Resolution:</label>
+              <select value={resolution} onChange={(e) => setResolution(e.target.value)} style={{ padding: '4px' }}>
+                {['keep original', '1080p', '720p', '480p'].map(opt => <option key={opt} value={opt}>{opt.toUpperCase()}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'left' }}>
+              <label>Aspect Ratio:</label>
+              <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} style={{ padding: '4px' }}>
+                {['keep original', '16:9', '9:16', '1:1'].map(opt => <option key={opt} value={opt}>{opt}</option>)}
+              </select>
+            </div>
+          </div>
+
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-sm)' }}>
             <button 
               disabled={isPending} 
-              onClick={(e) => { e.stopPropagation(); onSubmit(); }}
+              onClick={(e) => { e.stopPropagation(); onSubmit(resolution, aspectRatio); }}
               style={{ fontSize: '1.5rem', padding: 'var(--space-md) var(--space-xl)' }}
             >
               CREATE PROJECT

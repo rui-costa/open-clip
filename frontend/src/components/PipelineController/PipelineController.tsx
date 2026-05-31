@@ -17,7 +17,7 @@ interface PipelineControllerProps {
 export const PipelineController: React.FC<PipelineControllerProps> = ({ onExecute, steps, metadata }) => {
   const [hoveredStep, setHoveredStep] = React.useState<string | null>(null);
   const currentClipCount = metadata?.clips?.length || 0;
-  const totalClips = metadata?.components?.total_expected_clips || null;
+  const totalClips = metadata?.video_metadata?.components?.total_expected_clips || null;
 
   return (
     <div className="pipeline-controller">
@@ -48,8 +48,9 @@ export const PipelineController: React.FC<PipelineControllerProps> = ({ onExecut
         paddingBottom: 'var(--space-sm)'
       }}>
         {steps.map((step) => {
-          const isExecuted = step.status === 'executed';
+          const isExecuted = step.status === 'executed' || step.status === 'completed';
           const isRunning = step.status === 'running';
+          const isError = step.status === 'error';
           const isLocked = step.status === 'locked';
           const isHovered = hoveredStep === step.name;
 
@@ -60,7 +61,7 @@ export const PipelineController: React.FC<PipelineControllerProps> = ({ onExecut
               onClick={() => onExecute(isRunning ? 'STOP' : 'START', step.name)}
               onMouseEnter={() => setHoveredStep(step.name)}
               onMouseLeave={() => setHoveredStep(null)}
-              className={`pipeline-step-btn ${isRunning ? 'pipeline-step-running' : ''} ${isExecuted ? 'pipeline-step-success' : ''}`}
+              className={`pipeline-step-btn ${isRunning ? 'pipeline-step-running' : ''} ${isExecuted ? 'pipeline-step-success' : ''} ${isError ? 'pipeline-step-error' : ''}`}
               style={{ 
                 display: 'flex', 
                 flexDirection: 'column',
@@ -70,8 +71,8 @@ export const PipelineController: React.FC<PipelineControllerProps> = ({ onExecut
                 padding: 'var(--space-sm)', 
                 minHeight: '60px',
                 border: '4px solid var(--text)',
-                backgroundColor: isExecuted ? 'var(--success)' : (isRunning ? 'var(--accent)' : 'var(--bg)'),
-                color: isExecuted ? 'var(--text)' : (isRunning ? 'var(--bg)' : 'var(--text)'),
+                backgroundColor: isExecuted ? 'var(--success)' : (isRunning ? 'var(--accent)' : (isError ? '#ff4d4d' : 'var(--bg)')),
+                color: isExecuted ? 'var(--text)' : (isRunning ? 'var(--bg)' : (isError ? 'white' : 'var(--text)')),
                 opacity: isLocked ? 0.3 : 1,
                 cursor: isLocked ? 'not-allowed' : 'pointer',
                 transition: 'all 200ms var(--ease-out-quart)',
@@ -84,15 +85,6 @@ export const PipelineController: React.FC<PipelineControllerProps> = ({ onExecut
               <span style={{ fontWeight: 900, fontSize: '1rem', letterSpacing: '0.5px' }}>
                 {step.label}
               </span>
-              {isRunning && step.name === 'clipper' && (
-                <div style={{ fontSize: '0.7rem', marginTop: '4px', fontWeight: 700, opacity: 0.9, textTransform: 'none' }}>
-                  {totalClips 
-                    ? (currentClipCount < totalClips 
-                        ? `Clip ${currentClipCount + 1} of ${totalClips}` 
-                        : `Finalizing...`) 
-                    : `Clip ${currentClipCount + 1}...`}
-                </div>
-              )}
             </button>
           );
         })}

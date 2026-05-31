@@ -76,7 +76,8 @@ export const Clip: React.FC<ClipProps> = ({ projectId, clip, onDelete, onSyncSou
         <video 
           ref={videoRef}
           src={videoSrc} 
-          controls 
+          controls
+          preload="metadata"
           onPlay={() => {
             setPlayingClipIndex(clip.index);
             onSyncSource(clip.original_start);
@@ -92,7 +93,9 @@ export const Clip: React.FC<ClipProps> = ({ projectId, clip, onDelete, onSyncSou
             backgroundColor: '#000',
             display: 'block'
           }}
-        />
+        >
+          <source src={videoSrc} type="video/mp4" />
+        </video>
       </div>
 
       <div style={{ 

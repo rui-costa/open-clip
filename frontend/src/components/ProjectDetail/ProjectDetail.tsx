@@ -1,8 +1,10 @@
 import React, { useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '../Button';
 import { PipelineController } from '../PipelineController/PipelineController';
 import type { StepStatus } from '../PipelineController/PipelineController';
 import { ClipManager } from '../ClipManagement/ClipManager';
+import { getStepStatus as fetchStepStatus } from '../../api';
 
 interface ProjectDetailProps {
   metadata: any;
@@ -18,6 +20,35 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
   const [showMetadata, setShowMetadata] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
 
+  const { data: allStatuses } = useQuery({
+    queryKey: ['executionStatus', metadata.project_id],
+    queryFn: async () => {
+      const response = await fetch(`http://localhost:8000/project/${metadata.project_id}/execution_status`);
+      return response.json();
+    },
+    refetchInterval: 2000,
+  });
+
+  const { data: currentMetadata, refetch: refetchMetadata } = useQuery({
+    queryKey: ['projectMetadata', metadata.project_id],
+    queryFn: async () => {
+      const response = await fetch(`http://localhost:8000/project/${metadata.project_id}`);
+      return response.json();
+    },
+    initialData: metadata,
+    refetchInterval: 2000,
+  });
+
+  const displayMetadata = currentMetadata || metadata;
+
+  const steps = (pipelineConfig?.execution_order || []).map((stepName: string) => {
+    return {
+      name: stepName,
+      label: stepName.charAt(0).toUpperCase() + stepName.slice(1),
+      status: (allStatuses?.[stepName] as StepStatus) || 'locked'
+    };
+  });
+
   const syncSourceVideo = (startTime: number) => {
     if (sourceVideoRef.current) {
       sourceVideoRef.current.muted = true;
@@ -32,50 +63,16 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
     }
   };
 
-  const getStepStatus = (stepName: string): StepStatus => {
-    if (activeProcesses.includes(`${metadata.project_id}_${stepName}`)) return 'running';
-    
-    // Check for explicit status if tracked in metadata
-    if (metadata.step_statuses?.[stepName] === 'completed') return 'executed';
-    if (metadata.step_statuses?.[stepName] === 'failed') return 'todo'; // Or handle failed state
-
-    const isExecuted = (name: string) => {
-      // Keep existing fallback logic for older projects or incomplete data
-      if (name === 'transcribe' && metadata.transcription_file) return true;
-      if (name === 'highlights' && (metadata.highlights_file || (metadata.highlights && metadata.highlights.length > 0))) return true;
-      if (name === 'metadata' && (metadata.video_metadata && Object.keys(metadata.video_metadata).length > 0)) return true;
-      if (name === 'clipper' && (metadata.components?.clips_dir && metadata.clips?.length > 0)) return true;
-      if (name === 'upload' && metadata.uploaded) return true;
-      return false;
-    };
-
-    if (isExecuted(stepName)) return 'executed';
-
-    const stepConfig = pipelineConfig?.steps?.[stepName];
-    const dependencies = stepConfig?.depends_on || [];
-
-    if (dependencies.length === 0) return 'todo';
-
-    const allDepsMet = dependencies.every((dep: string) => isExecuted(dep));
-
-    return allDepsMet ? 'todo' : 'locked';
-  };
-
-  const steps = (pipelineConfig?.execution_order || []).map((stepName: string) => ({
-    name: stepName,
-    label: stepName.charAt(0).toUpperCase() + stepName.slice(1),
-    status: getStepStatus(stepName)
-  }));
 
   const renderMetadata = () => {
-    const { highlights } = metadata;
+    const { highlights } = displayMetadata;
 
     if (!highlights || highlights.length === 0) {
       return <div style={{ padding: 'var(--space-md)', color: 'var(--text-muted)' }}>No highlights generated yet.</div>;
     }
 
     const h = highlights[currentIndex];
-
+    // ... rest of renderMetadata remains same
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -137,7 +134,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
             borderBottom: 'var(--border)',
             marginBottom: 'var(--space-sm)'
           }}>
-            <h2 title={`SN: ${metadata.project_id}`} style={{ cursor: 'help', margin: 0 }}>{metadata.name}</h2>
+            <h2 title={`SN: ${displayMetadata.project_id}`} style={{ cursor: 'help', margin: 0 }}>{displayMetadata.name}</h2>
             <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
               <Button
                 variant="ghost"
@@ -163,7 +160,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
           )}
 
           <section>
-            <PipelineController onExecute={onExecuteAction} steps={steps} metadata={metadata} />
+            <PipelineController onExecute={onExecuteAction} steps={steps} metadata={displayMetadata} />
           </section>
         </div>
 
@@ -180,15 +177,19 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
             backgroundColor: '#000',
             lineHeight: 0 
           }}>
-            <video 
-              ref={sourceVideoRef}
-              src={`http://localhost:8000/projects/static/${metadata.project_id}/${metadata.original_file?.split('/').pop()}`}
-              controls
-              style={{ 
-                width: '100%', 
-                display: 'block'
-              }}
-            />
+            {displayMetadata.files?.original_file ? (
+              <video 
+                ref={sourceVideoRef}
+                src={`http://localhost:8000/projects/static/${displayMetadata.project_id}/${displayMetadata.files.original_file.split('/').pop()}`}
+                controls
+                style={{ 
+                  width: '100%', 
+                  display: 'block'
+                }}
+              />
+            ) : (
+              <div style={{ padding: '2rem', color: 'white', textAlign: 'center' }}>No original file available</div>
+            )}
           </div>
         </div>
       </div>
@@ -197,10 +198,10 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
 
       <section>
         <ClipManager 
-          projectId={metadata.project_id} 
-          clips={metadata.clips || []} 
+          projectId={displayMetadata.project_id} 
+          clips={displayMetadata.clips || []} 
           onDeleteClip={onDeleteProject} 
-          isLoading={activeProcesses.includes(`${metadata.project_id}_clipper`)}
+          isLoading={activeProcesses.includes(`${displayMetadata.project_id}_clipper`)}
           onSyncSource={syncSourceVideo}
           onPauseSource={pauseSourceVideo}
         />

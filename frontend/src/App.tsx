@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createProject, getProjects, getProjectMetadata, executePipelineStep, getPipelineConfig, getActiveProcesses, deleteProject } from './api';
+import { createProject, getProjects, getProjectMetadata, executePipelineStep, getPipelineConfig, getActiveProcesses, deleteProject, type ProjectMetadata } from './api';
 import { ProjectDetail } from './components/ProjectDetail/ProjectDetail';
 import { ClipDetail } from './components/ClipManagement/ClipDetail';
 import { ProjectHistory } from './components/History/ProjectHistory';
@@ -71,9 +71,9 @@ export default function App() {
     queryFn: getPipelineConfig,
   });
 
-  const { data: projectMetadata } = useQuery({
+  const { data: projectMetadata } = useQuery<ProjectMetadata>({
     queryKey: ['project', projectId],
-    queryFn: () => getProjectMetadata(projectId!),
+    queryFn: () => getProjectMetadata(projectId!) as Promise<ProjectMetadata>,
     enabled: !!projectId,
     refetchInterval: () => {
       const isActive = activeProcesses.some(processId => processId.startsWith(`${projectId}_`));
@@ -85,8 +85,11 @@ export default function App() {
   const [uploadProgress, setUploadProgress] = useState(0);
 
   const createMutation = useMutation({
-    mutationFn: (file: File) => createProject(file, setUploadProgress),
+    mutationFn: (vars: { file: File, resolution: string, aspectRatio: string }) => 
+      createProject(vars.file, vars.resolution, vars.aspectRatio, setUploadProgress),
     onSuccess: (data) => {
+      // In the new API design, data contains the project_id returned by init
+      // The file upload is now handled inside api.ts, so this is clean.
       navigate(`/project/${data.project_id}`);
     },
     onError: (error: any) => {
@@ -112,14 +115,16 @@ export default function App() {
     mutationFn: ({ action, step }: { action: 'START' | 'STOP', step: string }) => 
       executePipelineStep(projectId!, step, action),
     onSuccess: () => {
+      // Aggressively invalidate both to ensure UI sync
       queryClient.invalidateQueries({ queryKey: ['project', projectId] });
-      refetchProcesses(); // Immediate update on action
+      queryClient.invalidateQueries({ queryKey: ['activeProcesses'] });
+      refetchProcesses();
     }
   });
 
-  const handleSubmit = () => {
+  const handleSubmit = (resolution: string, aspectRatio: string) => {
     if (file) {
-      createMutation.mutate(file);
+      createMutation.mutate({ file, resolution, aspectRatio });
     }
   };
 

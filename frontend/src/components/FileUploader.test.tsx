@@ -8,6 +8,7 @@ describe('FileUploader Component', () => {
       <FileUploader 
         onFileSelect={vi.fn()} 
         isPending={false} 
+        uploadProgress={0}
         onSubmit={vi.fn()} 
       />
     );
@@ -21,6 +22,7 @@ describe('FileUploader Component', () => {
       <FileUploader 
         onFileSelect={vi.fn()} 
         isPending={false} 
+        uploadProgress={0}
         onSubmit={vi.fn()} 
       />
     );

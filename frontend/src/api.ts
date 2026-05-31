@@ -5,7 +5,25 @@ export type ProjectMetadata = {
   name: string;
   created_at: string;
   clips: any[];
+  highlights: any[];
   clips_count?: number;
+  step_statuses?: Record<string, string>;
+};
+
+export type SettingsResponse = {
+  settings: {
+    gemini_api_key?: string;
+    youtube_client_secrets?: any;
+    theme?: 'light' | 'dark';
+    video_defaults?: {
+      resolution: string;
+      aspect_ratio: string;
+    };
+  };
+  pipeline_config: {
+    execution_order: string[];
+    steps: Record<string, { auto_run: boolean }>;
+  };
 };
 
 async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -27,35 +45,54 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
 
 export const createProject = async (
   file: File, 
+  resolution: string,
+  aspectRatio: string,
   onProgress?: (progress: number) => void
 ): Promise<{ project_id: string }> => {
+  // 1. Init project metadata
+  const initResponse = await fetch(`${BASE_URL}/project/init`, {
+    method: 'POST',
+    body: JSON.stringify({ 
+      filename: file.name,
+      resolution,
+      aspectRatio
+    })
+  });
+  const { project_id } = await initResponse.json();
+  console.log('Project initialized, starting upload to:', `${BASE_URL}/project/upload/${project_id}`);
+
+  // 2. Upload file
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${BASE_URL}/project/create`);
-    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-    xhr.setRequestHeader('X-File-Name', file.name);
-
+    xhr.open('POST', `${BASE_URL}/project/upload/${project_id}`);
+    
     xhr.upload.onprogress = (event) => {
+      console.log('Upload progress:', event.loaded, '/', event.total);
       if (event.lengthComputable && onProgress) {
-        // Cap upload progress at 95% to leave room for server-side processing/finalization
-        const percentComplete = Math.min(95, Math.round((event.loaded / event.total) * 100));
+        const percentComplete = Math.round((event.loaded / event.total) * 100);
         onProgress(percentComplete);
       }
     };
 
     xhr.onload = () => {
+      console.log('Upload finished, status:', xhr.status);
       if (xhr.status >= 200 && xhr.status < 300) {
-        if (onProgress) onProgress(100);
-        resolve(JSON.parse(xhr.responseText));
+        resolve({ project_id });
       } else {
-        const errorData = JSON.parse(xhr.responseText || '{}');
-        reject(new Error(errorData.error || `Upload failed with status ${xhr.status}`));
+        reject(new Error(`Upload failed with status ${xhr.status}`));
       }
     };
 
-    xhr.onerror = () => reject(new Error('Network error during upload'));
+    xhr.onerror = () => {
+        console.error('XHR Upload Error');
+        reject(new Error('Network error during upload'));
+    };
     xhr.send(file);
   });
+};
+
+export const getStepStatus = async (projectId: string, step: string): Promise<{ status: string }> => {
+  return apiRequest(`/project/${projectId}/step_status/${step}`);
 };
 
 export const processProject = async (projectId: string) => {
