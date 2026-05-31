@@ -2,5 +2,6 @@
   "theme": "dark",
   "pipeline_defaults": {},
   "model": "base",
-  "new_key": "value"
+  "new_key": "value",
+  "log_level": "DEBUG"
 }

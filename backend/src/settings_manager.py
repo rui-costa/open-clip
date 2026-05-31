@@ -23,6 +23,7 @@ class SettingsManager:
             path.parent.mkdir(parents=True, exist_ok=True)
             defaults = {
                 "theme": "light",
+                "log_level": "INFO",
                 "pipeline_defaults": {},
                 "video_defaults": {
                     "resolution": "keep original",

@@ -1,5 +1,5 @@
 from backend.src.services.transcriber import Transcriber
-from backend.src.project import Project
+from backend.src.dataclasses.data import Project
 import os
 
 def test_transcriber_reset_metadata_with_files(golden_project):

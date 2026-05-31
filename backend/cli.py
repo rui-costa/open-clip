@@ -10,11 +10,47 @@ if str(root_dir) not in sys.path:
 
 import argparse
 import logging
+import uuid
+from datetime import datetime
 from backend.src.orchestrator import PipelineOrchestrator
 from backend.src.manager import ProjectManager
+from backend.src.settings_manager import settings_manager
 
-logging.basicConfig(level=logging.INFO)
+# Generate a unique session ID
+SESSION_ID = str(uuid.uuid4())[:8]
+
+class SessionFilter(logging.Filter):
+    def filter(self, record):
+        record.session_id = SESSION_ID
+        return True
+
+# Setup persistence logging
+timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+log_filename = f"{timestamp_str}.log"
+log_file = Path("backend/logs") / log_filename
+log_file.parent.mkdir(parents=True, exist_ok=True)
+
+level_name = settings_manager.get("log_level", "INFO")
+level = getattr(logging, level_name.upper(), logging.INFO)
+
+formatter = logging.Formatter('%(asctime)s - [%(session_id)s] - %(name)s - %(levelname)s - %(message)s')
+
+root_logger = logging.getLogger()
+root_logger.setLevel(level)
+
+file_handler = logging.FileHandler(log_file)
+file_handler.setFormatter(formatter)
+file_handler.addFilter(SessionFilter())
+
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+stream_handler.addFilter(SessionFilter())
+
+root_logger.addHandler(file_handler)
+root_logger.addHandler(stream_handler)
+
 logger = logging.getLogger(__name__)
+logger.info(f"CLI session started, session={SESSION_ID}")
 
 def _run_step(project_id, step_name):
     orchestrator = PipelineOrchestrator()

@@ -1,6 +1,6 @@
 {
   "steps": {
-    "transcribe": {
+    "transcription": {
       "command": "transcribe",
       "depends_on": [],
       "auto_run": true
@@ -8,22 +8,21 @@
     "highlights": {
       "command": "highlights",
       "depends_on": [
-        "transcribe"
+        "transcription"
       ],
       "auto_run": true
     },
     "metadata": {
       "command": "metadata",
       "depends_on": [
-        "transcribe"
+        "transcription"
       ],
       "auto_run": true
     },
     "clipper": {
       "command": "clipper",
       "depends_on": [
-        "highlights",
-        "metadata"
+        "highlights"
       ],
       "auto_run": true
     },
@@ -36,7 +35,7 @@
     }
   },
   "execution_order": [
-    "transcribe",
+    "transcription",
     "highlights",
     "metadata",
     "clipper",

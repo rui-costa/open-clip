@@ -1,6 +1,6 @@
 import pytest
-from unittest.mock import MagicMock
-from backend.src.project import Project
+from unittest.mock import MagicMock, patch
+from backend.src.dataclasses.data import Project
 from backend.src.infrastructure.whisper_client import WhisperClient
 from backend.src.infrastructure.gemini_client import GeminiClient
 from pathlib import Path
@@ -15,12 +15,29 @@ def golden_project():
     metadata_path = GOLDEN_PROJECT_PATH / "metadata.json"
     with open(metadata_path, 'r') as f:
         data = json.load(f)
-    return Project.from_dict(data)
+    return Project.from_dict(data, GOLDEN_PROJECT_PATH)
 
 @pytest.fixture
 def project_factory(golden_project):
     """Factory to generate the standard test project, which is the golden source."""
     return golden_project
+
+@pytest.fixture
+def mock_project():
+    """Provides a mocked Project object with all necessary attributes."""
+    mock = MagicMock(spec=Project)
+    mock.project_id = "test_project"
+    mock.name = "Test Project"
+    mock.step_statuses = {}
+    mock.clips = []
+    mock.highlights = []
+    mock.video_metadata = MagicMock()
+    mock.video_metadata.components = []
+    mock.video_metadata.top_recommendations = []
+    mock.files = MagicMock()
+    mock.files.original_file = "test.mp4"
+    return mock
+
 
 @pytest.fixture
 def credential_provider_mock():

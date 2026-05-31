@@ -1,7 +1,5 @@
-import os
-import pytest
 import logging
-from backend.src.project import Project
+from backend.src.dataclasses.data import Project
 from backend.src.services.transcription_mapper import TranscriptionResult, parse_whisper_result
 from backend.src.infrastructure.whisper_client import WhisperClient
 
@@ -12,25 +10,21 @@ class Transcriber:
     A service for transcribing audio files.
     Autonomous and self-contained per ADR-001.
     """
-    def _get_paths(self, project: Project) -> tuple[str, str]:
-        base_path = os.path.dirname(str(project.files.original_file))
-        return (
-            os.path.join(base_path, "transcription.txt"),
-            os.path.join(base_path, "word_map.csv")
-        )
-
     def reset_metadata(self, project: Project) -> None:
-        """Clears transcription artifacts."""
-        txt_path, csv_path = self._get_paths(project)
-        for path in [txt_path, csv_path]:
-            if os.path.exists(path):
+        """Clears transcription artifacts from disk and updates project state."""
+        import os
+        for field in ["transcription_file", "word_map_file"]:
+            path = project.get_artifact_path(field)
+            if path.exists():
                 os.remove(path)
+        project.set_step_status("transcription", "pending")
 
     def start_service(self, project: Project) -> None:
         """Internal lifecycle initialization."""
         self.reset_metadata(project)
+        project.set_step_status("transcription", "running")
 
-    def execute(self, project: Project) -> TranscriptionResult:  # pragma: no cover
+    async def execute(self, project: Project) -> TranscriptionResult:  # pragma: no cover
         """
         Autonomous execution: 
         1. Protocol start
@@ -38,12 +32,13 @@ class Transcriber:
         3. Persist artifacts
         4. Protocol end
         """
+        logger.info(f"Transcriber executing for project={project.project_id}")
         self.start_service(project)
-        
+
         client = WhisperClient()
-        file_path = str(project.files.original_file)
-        logger.info(f"Transcribing {file_path}")
-        
+        file_path = str(project.get_artifact_path("original_file"))
+        logger.info(f"Transcriber calling Whisper for file={file_path}")
+
         result = client.transcribe(
             file_path,
             word_timestamps=True,
@@ -52,19 +47,18 @@ class Transcriber:
             condition_on_previous_text=False,
             verbose=False
         )
-        
+
         transcription_data = parse_whisper_result(result)
-        
+        logger.info(f"Transcriber transcription received, segment_count={len(result.get('segments', []))}")
+
         # Save artifacts internally
-        txt_path, csv_path = self._get_paths(project)
-        
-        # Save transcription text and word map (using mapper logic)
-        transcription_data.save_transcription_text(txt_path)
-        transcription_data.save_word_map(csv_path)
-            
+        transcription_data.save(project)
+
         self.end_service(project)
+        logger.info(f"Transcriber completed for project={project.project_id}")
         return transcription_data
 
     def end_service(self, project: Project) -> None:
         """Finalizes the service."""
-        pass
+        project.set_step_status("transcription", "completed")
+

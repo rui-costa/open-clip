@@ -1,5 +1,5 @@
 from backend.src.services.clipper import Clipper
-from backend.src.project import Project
+from backend.src.dataclasses.data import Project
 
 def test_clipper_protocol_methods(project_factory):
     """

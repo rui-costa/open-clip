@@ -1,11 +1,17 @@
 import csv
 from dataclasses import dataclass
 from typing import List, Any
+from backend.src.dataclasses.data import Project
 
 @dataclass
 class TranscriptionResult:
     text: str
     word_map: List[List[Any]]
+
+    def save(self, project: Project):
+        """Persists the transcription results using project-relative paths."""
+        self.save_transcription_text(str(project.get_artifact_path("transcription_file")))
+        self.save_word_map(str(project.get_artifact_path("word_map_file")))
 
     def save_word_map(self, path: str):
         with open(path, "w", encoding="utf-8", newline="") as f:

@@ -2,6 +2,8 @@ import logging
 import json
 import os
 from typing import Any, Dict
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import httpx
 
 # Attempting safe imports
 try:
@@ -46,6 +48,11 @@ class GeminiClient:
             
         raise ImportError("No suitable Google client SDK installed")
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(httpx.ReadError)
+    )
     def generate_content(self, prompt: str, is_json: bool = True) -> str:
         config = {"response_mime_type": "application/json"} if is_json else {}
         
