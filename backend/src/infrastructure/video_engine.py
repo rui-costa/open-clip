@@ -49,6 +49,12 @@ class OpenCVVideoEngine(VideoEngine):
     def process_clip(self, input_path: str, output_path: str, start: float, end: float, aspect_ratio: str, resolution: str) -> None:
         from moviepy import VideoFileClip
         from moviepy.video.fx import Crop
+        import json
+        
+        with open("backend/config/resolutions.json", "r") as f:
+            res_map = json.load(f)
+        with open("backend/config/aspect_ratios.json", "r") as f:
+            ar_map = json.load(f)
         
         with VideoFileClip(input_path) as video:
             clip = video.subclipped(start, end)
@@ -57,13 +63,15 @@ class OpenCVVideoEngine(VideoEngine):
             if aspect_ratio == "keep-original":
                 ar_ratio = clip.w / clip.h
             else:
-                ar_w, ar_h = map(int, aspect_ratio.split(':'))
+                ar_val = ar_map.get(aspect_ratio, aspect_ratio)
+                ar_w, ar_h = map(int, ar_val.split(':'))
                 ar_ratio = ar_w / ar_h
             
             if resolution == "keep-original":
                 target_w, target_h = clip.w, clip.h
             else:
-                target_w, target_h = map(int, resolution.split('x'))
+                target_res = res_map.get(resolution, resolution)
+                target_w, target_h = map(int, target_res.split('x'))
             
             # If resolution keep-original but AR changed, adjust target dims
             if resolution == "keep-original" and aspect_ratio != "keep-original":
