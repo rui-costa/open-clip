@@ -209,12 +209,8 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 if not chunk: break
                 f.write(chunk)
                 remaining -= len(chunk)
-        
-        project.files.original_file = str(file_path)
-        project.settings.source_file = new_filename
-        project.save()
-        self.send_json_response({"status": "uploaded"})
 
+        self.send_json_response({"status": "uploaded", "path": str(file_path)})
     def handle_post_step(self):
         content_length = int(self.headers.get('Content-Length', 0))
         data = json.loads(self.rfile.read(content_length))

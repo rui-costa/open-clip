@@ -1,141 +1,139 @@
 {
-  "project_id": "00000000-0000-0000-0000-000000000000",
-  "name": "First Project",
-  "created_at": "2026-05-16T20:44:37.173918",
-  "files":{
-    "transcription_file": "transcription.txt",
-    "word_map_file": "word_map.csv",
-    "original_file": "original.mp4"
-  },
-  "highlights": [
-    {
-      "highlight_text": "This is OpenClip, your open source clip editor.",
-      "viral_hook_text": "The Ultimate Open Source Clip Editor",
-      "video_description_for_x": "Say hello to OpenClip! \ud83c\udfac The open source solution for your clip editing needs. #OpenSource #VideoEditing #ContentCreation",
-      "video_description_for_reddit": "Check out OpenClip, a new open source clip editor. Great for anyone looking for a free, community-driven alternative to expensive software. r/videoediting",
-      "video_description_for_linkedin": "Introducing OpenClip: an open source approach to video clip editing designed for efficiency and accessibility. #OpenSource #Innovation #VideoProduction",
-      "video_title_for_youtube_short": "Meet OpenClip: The Open Source Clip Editor \ud83d\ude80",
-      "start": 0.5,
-      "end": 4.5
-    }
-  ],
-  "video_metadata": {
-    "components": [
-      {
-        "index": 0,
-        "title": "Stop Paying for Video Editors! Meet OpenClip",
-        "summary": "Discover OpenClip, the ultimate open-source clip editor for creators. Learn how to edit video clips for free using this powerful, community-driven alternative to expensive subscription software.",
-        "post_for_x": "Stop wasting money on monthly subscriptions! \ud83d\udcb8 Meet OpenClip, the open-source editor you've been waiting for. #OpenSource #VideoEditing #CreatorEconomy",
-        "post_for_reddit": "Finally, a real open-source alternative for clip editing. Check out OpenClip. What features do you want to see added to the roadmap?",
-        "post_for_linkedin": "Efficiency meets freedom. Discover how OpenClip is disrupting the video editing space with its open-source model. #OpenSource #TechInnovation #VideoProduction",
-        "reason": "High CTR potential due to the strong negative hook addressing a major pain point (cost)."
-      },
-      {
-        "index": 1,
-        "title": "The Best Open Source Clip Editor? (OpenClip Review)",
-        "summary": "Discover OpenClip, the ultimate open-source clip editor for creators. Learn how to edit video clips for free using this powerful, community-driven alternative to expensive subscription software.",
-        "post_for_x": "Is this the king of open-source editing? \ud83d\udc51 Testing out OpenClip! #OpenClip #VideoEditor #TechReview",
-        "post_for_reddit": "Just tried OpenClip. Is it actually the best open-source editor out there right now? Let's discuss in the comments.",
-        "post_for_linkedin": "Exploring the landscape of open-source creativity. Is OpenClip the new industry standard for free video editing?",
-        "reason": "Uses a curiosity gap and a question-based format to drive clicks and community engagement."
-      },
-      {
-        "index": 2,
-        "title": "How to Edit Clips for FREE with OpenClip",
-        "summary": "Discover OpenClip, the ultimate open-source clip editor for creators. Learn how to edit video clips for free using this powerful, community-driven alternative to expensive subscription software.",
-        "post_for_x": "Want to edit clips without the price tag? \ud83c\udfac Here is how to use OpenClip for free! #Tutorial #OpenClip #FreeTools",
-        "post_for_reddit": "A quick guide on getting started with OpenClip for anyone looking for a free, open-source alternative.",
-        "post_for_linkedin": "Maximizing creativity on a budget. A look at how OpenClip provides professional clip editing at zero cost.",
-        "reason": "Strong how-to appeal for users looking for immediate, practical solutions."
-      },
-      {
-        "index": 3,
-        "title": "OpenClip: The Game-Changer for Video Creators",
-        "summary": "Discover OpenClip, the ultimate open-source clip editor for creators. Learn how to edit video clips for free using this powerful, community-driven alternative to expensive subscription software.",
-        "post_for_x": "Video creators, your workflow is about to change forever. \ud83d\ude80 Meet OpenClip! #ContentCreator #OpenClip #Workflow",
-        "post_for_reddit": "OpenClip is making waves in the community. Here is why it's a total game-changer for indie creators.",
-        "post_for_linkedin": "Innovation in the creator economy: How OpenClip is empowering creators through open-source technology.",
-        "reason": "Emotional trigger using hype and high-stakes language to generate interest."
-      },
-      {
-        "index": 4,
-        "title": "Why Every Editor Needs This Open Source Tool",
-        "summary": "Discover OpenClip, the ultimate open-source clip editor for creators. Learn how to edit video clips for free using this powerful, community-driven alternative to expensive subscription software.",
-        "post_for_x": "If you edit video, you NEED to see this. \ud83d\udee0\ufe0f OpenClip is a must-have tool. #VideoEditing #OpenSource #MustHave",
-        "post_for_reddit": "Why am I just finding out about OpenClip now? Every editor should have this in their toolkit.",
-        "post_for_linkedin": "A must-have tool for the modern digital editor: Exploring the utility of OpenClip.",
-        "reason": "Curiosity gap that implies the viewer is missing out on an essential tool."
-      },
-      {
-        "index": 5,
-        "title": "Is OpenClip Better Than Paid Alternatives?",
-        "summary": "Discover OpenClip, the ultimate open-source clip editor for creators. Learn how to edit video clips for free using this powerful, community-driven alternative to expensive subscription software.",
-        "post_for_x": "OpenClip vs. The Giants. \ud83e\udd4a Can open-source actually compete with paid editors? #Comparison #OpenClip #Tech",
-        "post_for_reddit": "Comparing OpenClip to the standard paid tools. Is the open-source switch worth it?",
-        "post_for_linkedin": "A comparative analysis: Can open-source software like OpenClip challenge industry giants?",
-        "reason": "Controversial/Comparison style that attracts fans and critics of both sides."
-      },
-      {
-        "index": 6,
-        "title": "Meet OpenClip: Your New Favorite Clip Editor",
-        "summary": "Discover OpenClip, the ultimate open-source clip editor for creators. Learn how to edit video clips for free using this powerful, community-driven alternative to expensive subscription software.",
-        "post_for_x": "Say hello to your new favorite editor: OpenClip! \ud83d\ude0d #VideoEditing #NewTool #OpenClip",
-        "post_for_reddit": "I've been using OpenClip lately and it's surprisingly good. Definitely my new favorite.",
-        "post_for_linkedin": "Introducing OpenClip: A fresh, open-source perspective on clip editing.",
-        "reason": "Discovery-style title that builds a positive emotional connection."
-      },
-      {
-        "index": 7,
-        "title": "The Ultimate Open Source Clip Editor is Here",
-        "summary": "Discover OpenClip, the ultimate open-source clip editor for creators. Learn how to edit video clips for free using this powerful, community-driven alternative to expensive subscription software.",
-        "post_for_x": "The search is over. \ud83d\udd0d The ultimate open-source clip editor has arrived. #OpenClip #TechNews #VideoEditing",
-        "post_for_reddit": "OpenClip is officially here. Let's see if it lives up to the hype.",
-        "post_for_linkedin": "The next evolution in open-source video tools is here: Introducing OpenClip.",
-        "reason": "High-authority hype intended to signal a major industry event."
-      },
-      {
-        "index": 8,
-        "title": "Say Goodbye to Expensive Subscriptions with OpenClip",
-        "summary": "Discover OpenClip, the ultimate open-source clip editor for creators. Learn how to edit video clips for free using this powerful, community-driven alternative to expensive subscription software.",
-        "post_for_x": "Sick of monthly fees? \ud83d\udcb8 Break free with OpenClip! #NoSubscriptions #OpenSource #VideoEditing",
-        "post_for_reddit": "Tired of subscription fatigue? I found a great open-source alternative called OpenClip.",
-        "post_for_linkedin": "Reducing overhead in creative workflows: The benefits of switching to OpenClip.",
-        "reason": "Directly targets the financial pain point of the target audience."
-      },
-      {
-        "index": 9,
-        "title": "OpenClip: Professional Editing, Zero Cost",
-        "summary": "Discover OpenClip, the ultimate open-source clip editor for creators. Learn how to edit video clips for free using this powerful, community-driven alternative to expensive subscription software.",
-        "post_for_x": "Pro-level editing without the pro-level price. \ud83c\udfac Meet OpenClip! #FreeSoftware #VideoEditing #OpenClip",
-        "post_for_reddit": "Professional features, zero cost. Is OpenClip the real deal?",
-        "post_for_linkedin": "Achieving professional video output through open-source tools: The OpenClip advantage.",
-        "reason": "Benefit-driven and specific, highlighting the value proposition clearly."
-      }
+    "project_id": "00000000-0000-0000-0000-000000000000",
+    "name": "First Project",
+    "created_at": "2026-05-16T20:44:37.173918",
+    "files": {
+        "transcription_file": "transcription.txt",
+        "word_map_file": "word_map.csv",
+        "original_file": "original.mp4"
+    },
+    "highlights": [
+        {
+            "highlight_text": "This is OpenClip, your open source clip editor.",
+            "viral_hook_text": "The Ultimate Open Source Clip Editor",
+            "video_description_for_x": "Say hello to OpenClip! \ud83c\udfac The open source solution for your clip editing needs. #OpenSource #VideoEditing #ContentCreation",
+            "video_description_for_reddit": "Check out OpenClip, a new open source clip editor. Great for anyone looking for a free, community-driven alternative to expensive software. r/videoediting",
+            "video_description_for_linkedin": "Introducing OpenClip: an open source approach to video clip editing designed for efficiency and accessibility. #OpenSource #Innovation #VideoProduction",
+            "video_title_for_youtube_short": "Meet OpenClip: The Open Source Clip Editor \ud83d\ude80",
+            "start": 0.5,
+            "end": 4.5
+        }
     ],
-    "top_recommendations": [
-      {
-        "index": 0,
-        "reason": "This title has the highest CTR potential because it uses a 'negative hook' (Stop Paying) which immediately triggers an emotional response in creators feeling the weight of subscription costs."
-      },
-      {
-        "index": 1,
-        "reason": "This title utilizes the 'curiosity gap' and a question format. It invites debate and encourages viewers to click to see if the software actually meets the high standard implied."
-      }
-    ]
-  },
-  "settings": {
-    "aspect_ratio": "9:16",
-    "resolution": "keep-original",
-    "source_file": "open-clip.mp4"
-  },
-  "clips": [
-    {
-      "filename": "clip_000.mp4",
-      "original_start": 0.5,
-      "original_end": 3.9,
-      "processed_start": 0.5,
-      "processed_end": 3.9,
-      "text": "This is OpenClip, your open source clip editor."
+    "video_metadata": {
+        "components": [
+            {
+                "index": 0,
+                "title": "Stop Paying for Video Editors: Meet OpenClip",
+                "summary": "Discover OpenClip, a powerful open-source clip editor that removes the financial barrier to professional video editing. This tool allows creators to cut and refine their footage for free.",
+                "post_for_x": "Stop wasting money on monthly subscriptions! \ud83d\udcb8 OpenClip is here to change the game. Open source, powerful, and free. #OpenClip #VideoEditing #OpenSource",
+                "post_for_reddit": "Tired of expensive video editing software? I found OpenClip, an open-source alternative for clipping. What do you guys think of the open-source editing scene right now?",
+                "post_for_linkedin": "Efficiency meets accessibility. OpenClip is bringing the power of open-source development to video editing, allowing teams to scale their content production without licensing overhead.",
+                "reason": "TOP PICK: Extremely high CTR potential by targeting a common pain point (cost) and offering an immediate solution."
+            },
+            {
+                "index": 1,
+                "title": "The Best Open Source Clip Editor You\u2019ve Never Used",
+                "summary": "Explore the capabilities of OpenClip, the hidden gem of open-source video tools. Learn how this editor can streamline your clipping process and improve your workflow.",
+                "post_for_x": "The best-kept secret in video production is finally out. \ud83e\udd2b Meet OpenClip. #ContentCreator #EditingTools #OpenClip",
+                "post_for_reddit": "Has anyone tried OpenClip yet? It's an open-source clip editor that seems surprisingly capable. Here is a quick look at what it does.",
+                "post_for_linkedin": "Tooling discovery: OpenClip is proving that open-source alternatives can compete with industry standards in the video editing space.",
+                "reason": "TOP PICK: Uses a 'curiosity gap' to make the viewer feel like they are missing out on a secret advantage."
+            },
+            {
+                "index": 2,
+                "title": "How to Edit Viral Clips for FREE with OpenClip",
+                "summary": "A step-by-step look at using OpenClip to create high-impact short-form content. This video demonstrates why open-source software is the future of social media editing.",
+                "post_for_x": "Want to go viral without spending a dime on software? \ud83d\ude80 OpenClip is the answer. #Shorts #TikTok #FreeTools",
+                "post_for_reddit": "Guide: How to use OpenClip to make your short-form content. Great for anyone starting a channel on a budget.",
+                "post_for_linkedin": "Reducing the barrier to entry for digital storytelling. OpenClip provides the essential tools for creators to produce professional clips for free.",
+                "reason": "Strong 'how-to' appeal combined with the high-value keyword 'viral'."
+            },
+            {
+                "index": 3,
+                "title": "OpenClip: The Game-Changer for Content Creators",
+                "summary": "An overview of OpenClip and how its open-source nature provides a flexible, free alternative for editors. See how it compares to traditional clipping software.",
+                "post_for_x": "The editing workflow just got an upgrade. \u26a1\ufe0f OpenClip is a total game-changer for creators. Check it out! #VideoProduction #CreativeTools",
+                "post_for_reddit": "OpenClip just dropped and it looks like a serious contender for anyone who needs a fast, open-source clipping tool.",
+                "post_for_linkedin": "Innovation in the creator economy often comes from open-source projects. OpenClip is a prime example of empowering the community through shared tools.",
+                "reason": "Uses power words like 'Game-Changer' to establish authority and importance."
+            },
+            {
+                "index": 4,
+                "title": "Finally! An Open Source Alternative to Paid Editors",
+                "summary": "After years of expensive subscriptions, OpenClip arrives as the open-source solution for clip editing. See the features that make it a viable alternative.",
+                "post_for_x": "The wait is over. \ud83e\udd73 Finally, a real open-source alternative for clipping. Say hello to OpenClip! #OSS #VideoEditing",
+                "post_for_reddit": "Finally, we have a dedicated open-source clip editor. No more subscription traps. OpenClip is here.",
+                "post_for_linkedin": "The shift toward open-source software continues. OpenClip provides a professional-grade alternative to proprietary editing suites.",
+                "reason": "Emotional trigger ('Finally!') that resonates with frustrated users of subscription models."
+            },
+            {
+                "index": 5,
+                "title": "OpenClip Explained: Fast, Free, and Open Source",
+                "summary": "A concise breakdown of what OpenClip is and why it matters for video editors. Learn about the speed and freedom of an open-source ecosystem.",
+                "post_for_x": "Fast. Free. Open Source. \ud83c\udfac That's OpenClip. Here is everything you need to know in a few minutes. #TechTips #OpenClip",
+                "post_for_reddit": "Quick breakdown of OpenClip for those who don't know what it is. Simple, open-source clipping.",
+                "post_for_linkedin": "A brief analysis of OpenClip's value proposition: eliminating cost and increasing transparency in video editing.",
+                "reason": "Direct and benefit-driven; appeals to users looking for a quick explanation."
+            },
+            {
+                "index": 6,
+                "title": "Is OpenClip the Future of Video Editing?",
+                "summary": "A critical look at OpenClip and the potential of open-source software to disrupt the video editing industry. Explore its features and future roadmap.",
+                "post_for_x": "Is the era of expensive editing software ending? \ud83e\uddd0 OpenClip might just be the future. #FutureTech #OpenSource",
+                "post_for_reddit": "Discussion: Do you think tools like OpenClip will eventually replace the big name editors? Let's talk about the future of OSS video tools.",
+                "post_for_linkedin": "Industry Insight: Could the democratization of editing tools through projects like OpenClip reshape content production pipelines?",
+                "reason": "Question-based title that encourages clicks to find the answer (engagement loop)."
+            },
+            {
+                "index": 7,
+                "title": "Edit Faster: Introducing OpenClip Open Source Editor",
+                "summary": "Learn how to speed up your post-production workflow with OpenClip. This video showcases the efficiency of this new open-source clipping tool.",
+                "post_for_x": "Speed up your workflow. \u23f1\ufe0f Introducing OpenClip, the open-source editor built for efficiency. #Productivity #Editing",
+                "post_for_reddit": "If you're looking to speed up your clipping process, you need to check out OpenClip. It's open-source and lightweight.",
+                "post_for_linkedin": "Optimizing the production pipeline is key to scaling content. OpenClip offers a streamlined approach to clipping and editing.",
+                "reason": "Focuses on the 'speed' benefit, which is a primary desire for professional editors."
+            },
+            {
+                "index": 8,
+                "title": "Why Every Creator Needs OpenClip in 2024",
+                "summary": "An argument for why OpenClip is an essential tool for the modern creator's toolkit. See how it integrates into a professional workflow.",
+                "post_for_x": "2024 is the year of open source. \ud83c\udf1f Here is why OpenClip is a must-have for every creator's toolkit. #CreatorEconomy #OpenClip",
+                "post_for_reddit": "Why are you still using paid clipping tools? OpenClip is essentially a must-have for any creator right now.",
+                "post_for_linkedin": "Strategic tool adoption: Why integrating open-source projects like OpenClip is a smart move for creators and agencies in 2024.",
+                "reason": "Creates a sense of urgency and necessity by referencing the current year."
+            },
+            {
+                "index": 9,
+                "title": "From Raw Footage to Viral Clips: The OpenClip Way",
+                "summary": "Follow the journey of transforming raw video into polished, shareable clips using OpenClip. A demonstration of the power of open-source editing.",
+                "post_for_x": "Raw footage \u27a1\ufe0f Viral clips. See how OpenClip makes the process seamless. \ud83c\udfac #ContentCreation #VideoTips",
+                "post_for_reddit": "Walkthrough: Taking raw footage to finished clips using only OpenClip. The result is surprisingly professional.",
+                "post_for_linkedin": "Case Study: Transforming raw assets into high-engagement clips using OpenClip's open-source architecture.",
+                "reason": "Story-driven and result-oriented, showing the 'before and after' transformation."
+            }
+        ],
+        "top_recommendations": []
+    },
+    "settings": {
+        "aspect_ratio": "9:16",
+        "resolution": "keep-original"
+    },
+    "clips": [
+        {
+            "filename": "clip_000.mp4",
+            "original_start": 0.5,
+            "original_end": 4.5,
+            "processed_start": 0.5,
+            "processed_end": 4.5,
+            "text": "This is OpenClip, your open source clip editor."
+        }
+    ],
+    "status": null,
+    "step_statuses": {
+        "transcription": "completed",
+        "highlights": "completed",
+        "metadata": "completed",
+        "clipper": "completed",
+        "upload": "pending"
     }
-  ]
 }

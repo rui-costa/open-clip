@@ -31,7 +31,7 @@ class WordMap:
 class ProjectFileSettings:
     transcription_file: str = "transcription.txt"
     word_map_file: str = "word_map.csv"
-    original_file: str = ""
+    original_file: str = "original.mp4"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -186,7 +186,6 @@ class VideoMetadata:
 class ProjectSettings:
     aspect_ratio: str
     resolution: str
-    source_file: str
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -215,7 +214,7 @@ class Project:
     files: ProjectFileSettings = field(default_factory=ProjectFileSettings)
     highlights: List[Highlight] = field(default_factory=list)
     video_metadata: VideoMetadata = field(default_factory=lambda: VideoMetadata([], []))
-    settings: ProjectSettings = field(default_factory=lambda: ProjectSettings("16:9", "1080p", ""))
+    settings: ProjectSettings = field(default_factory=lambda: ProjectSettings("16:9", "1080p"))
     clips: List[Clip] = field(default_factory=list)
     status: Optional[str] = None
     step_statuses: Dict[str, str] = field(default_factory=dict)
@@ -287,7 +286,10 @@ class Project:
 
         comp = [VideoComponent(**c) for c in metadata["video_metadata"]["components"]]
         self.video_metadata = VideoMetadata(comp, metadata["video_metadata"]["top_recommendations"])
-        self.settings = ProjectSettings(**metadata["settings"])
+        
+        settings_data = {k: v for k, v in metadata["settings"].items() if k in ["aspect_ratio", "resolution"]}
+        self.settings = ProjectSettings(**settings_data)
+        
         self.clips = [Clip(**c) for c in metadata["clips"]]
         self.status = metadata.get("status")
         self.step_statuses = metadata.get("step_statuses", {})
