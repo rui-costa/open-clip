@@ -93,6 +93,7 @@ npm-debug.log
 
 #Project folders
 projects/*
+root/
 
 #Inital test project
 !projects/00000000-0000-0000-0000-000000000000/
