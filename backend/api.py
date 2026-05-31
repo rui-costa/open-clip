@@ -200,7 +200,12 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
     # POST Handlers
     def handle_post_init(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        data = json.loads(self.rfile.read(content_length))
         project = Project()
+        project.settings.resolution = data.get('resolution', 'keep original')
+        project.settings.aspect_ratio = data.get('aspectRatio', 'keep original')
+        project.save()
         self.send_json_response({"project_id": project.project_id})
 
     def handle_post_upload(self):

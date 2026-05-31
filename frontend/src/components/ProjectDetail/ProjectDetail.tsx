@@ -134,7 +134,17 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
             borderBottom: 'var(--border)',
             marginBottom: 'var(--space-sm)'
           }}>
-            <h2 title={`SN: ${displayMetadata.project_id}`} style={{ cursor: 'help', margin: 0 }}>{displayMetadata.name}</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+              <h2 title={`SN: ${displayMetadata.project_id}`} style={{ cursor: 'help', margin: 0 }}>{displayMetadata.name}</h2>
+              <div style={{ display: 'flex', gap: 'var(--space-md)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  <span style={{ display: 'flex', gap: '4px' }}>
+                      Resolution: <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>{displayMetadata.settings?.resolution || 'N/A'}</span>
+                  </span>
+                  <span style={{ display: 'flex', gap: '4px' }}>
+                      Aspect Ratio: <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>{displayMetadata.settings?.aspect_ratio || 'N/A'}</span>
+                  </span>
+              </div>
+            </div>
             <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
               <Button
                 variant="ghost"
