@@ -302,6 +302,10 @@ class Project:
         self.clips = clips
         self.save()
 
+    def set_property(self, key: str, value: Any):
+        setattr(self, key, value)
+        self.save()
+
     def delete_clip(self, index: int):
         if 0 <= index < len(self.clips):
             clip = self.clips.pop(index)
