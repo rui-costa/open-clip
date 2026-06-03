@@ -28,7 +28,7 @@ class Uploader:
     async def execute(self, project: Project) -> List[Dict[str, Any]]:  # pragma: no cover
         logger.info(f"Uploader executing for project={project.project_id}, clip_count={len(project.clips)}")
         self.start_service(project)
-        client = YoutubeClient(api_key=settings_manager.get("youtube_api_key"))
+        client = YoutubeClient()
         
         uploads_list = []
         for clip in project.clips:
@@ -36,9 +36,11 @@ class Uploader:
             clip_path = str(Path("projects") / project.project_id / "clips" / clip.filename)
             
             logger.info(f"Uploader uploading clip={clip.filename} to YouTube")
+            title = (clip.text[:90] or "Untitled Clip") + " #shorts"
+            logger.info(f"Uploading with title: '{title}'")
             result = client.upload_video(
                 file_path=clip_path,
-                title=clip.text[:100],
+                title=title,
                 description=f"Generated clip from {project.name}"
             )
             logger.info(f"Uploader uploaded clip={clip.filename}, result_id={result.get('id')}")
