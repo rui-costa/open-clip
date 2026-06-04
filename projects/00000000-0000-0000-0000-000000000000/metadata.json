@@ -15,8 +15,10 @@
             "video_description_for_reddit": "Check out OpenClip, a new open source clip editor. Great for anyone looking for a free, community-driven alternative to expensive software. r/videoediting",
             "video_description_for_linkedin": "Introducing OpenClip: an open source approach to video clip editing designed for efficiency and accessibility. #OpenSource #Innovation #VideoProduction",
             "video_title_for_youtube_short": "Meet OpenClip: The Open Source Clip Editor \ud83d\ude80",
-            "start": 0.5,
-            "end": 4.5
+            "start": 0.0,
+            "end": 3.84,
+            "is_clip_generated": true,
+            "generated_clip_filename": "clip_000.mp4"
         }
     ],
     "video_metadata": {
@@ -118,22 +120,12 @@
         "aspect_ratio": "9:16",
         "resolution": "keep original"
     },
-    "clips": [
-        {
-            "filename": "clip_000.mp4",
-            "original_start": 0.5,
-            "original_end": 4.5,
-            "processed_start": 0.5,
-            "processed_end": 4.5,
-            "text": "This is OpenClip, your open source clip editor."
-        }
-    ],
     "status": null,
     "step_statuses": {
         "transcription": "completed",
         "highlights": "completed",
         "metadata": "completed",
         "clipper": "completed",
-        "upload": "pending"
+        "upload": "completed"
     }
 }
