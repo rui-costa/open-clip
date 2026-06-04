@@ -207,15 +207,23 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
       <div style={{ borderBottom: 'var(--border)', margin: 'var(--space-md) 0 0 0' }} />
 
       <section>
-        <ClipManager 
-          projectId={displayMetadata.project_id} 
-          clips={displayMetadata.clips || []} 
-          onDeleteClip={onDeleteClip} 
+        <ClipManager
+          projectId={displayMetadata.project_id}
+          clips={displayMetadata.highlights
+            .filter((h: any) => h.is_clip_generated)
+            .map((h: any) => ({
+              filename: h.generated_clip_filename,
+              original_start: h.start,
+              original_end: h.end,
+              text: h.highlight_text
+            })) || []}
+          onDeleteClip={onDeleteClip}
           isLoading={activeProcesses.includes(`${displayMetadata.project_id}_clipper`)}
           onSyncSource={syncSourceVideo}
           onPauseSource={pauseSourceVideo}
         />
       </section>
+
     </div>
         );
         }

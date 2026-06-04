@@ -40,13 +40,20 @@ class ProjectFileSettings:
 
 @dataclass
 class Highlights:
-    def __init__(self, items: List[Dict[str, Any]], project: 'Project'):
+    items: List[Dict[str, Any]]
+    project: 'Project'
+    total_highlights: int = 0
+    total_clips: int = 0
+
+    def __post_init__(self):
         self.highlights = []
-        for item in items:
+        for item in self.items:
             if isinstance(item, dict):
-                h = Highlight.from_json(item, project)
+                h = Highlight.from_json(item, self.project)
                 if h.start > 0 or h.end > 0:
                     self.highlights.append(h)
+        self.total_highlights = len(self.highlights)
+        self.total_clips = len([h for h in self.highlights if h.is_clip_generated])
 
 @dataclass
 class Highlight:
@@ -58,6 +65,8 @@ class Highlight:
     video_title_for_youtube_short: str
     start: float
     end: float
+    is_clip_generated: bool = False
+    generated_clip_filename: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -72,7 +81,9 @@ class Highlight:
             video_description_for_linkedin=data.get("video_description_for_linkedin", ""),
             video_title_for_youtube_short=data.get("video_title_for_youtube_short", ""),
             start=0.0,
-            end=0.0
+            end=0.0,
+            is_clip_generated=data.get("is_clip_generated", False),
+            generated_clip_filename=data.get("generated_clip_filename")
         )
         instance.find_timestamps(project)
         return instance
@@ -215,13 +226,16 @@ class Project:
     highlights: List[Highlight] = field(default_factory=list)
     video_metadata: VideoMetadata = field(default_factory=lambda: VideoMetadata([], []))
     settings: ProjectSettings = field(default_factory=lambda: ProjectSettings("16:9", "1080p"))
-    clips: List[Clip] = field(default_factory=list)
     status: Optional[str] = None
     step_statuses: Dict[str, str] = field(default_factory=dict)
     base_path: Path = field(default=Path("projects"))
     base_directory: str = "projects"
     clip_base_directory: str = "clips"
     _word_map: Optional[WordMap] = field(default=None, init=False, repr=False)
+
+    def get_artifact_path(self, key: str) -> Path:
+        base = self.base_path / (self.project_id or "")
+        return base / getattr(self.files, key)
 
     @property
     def word_map(self) -> WordMap:
@@ -272,7 +286,6 @@ class Project:
             "highlights": [h.to_dict() for h in self.highlights],
             "video_metadata": self.video_metadata.to_dict(),
             "settings": self.settings.to_dict(),
-            "clips": [c.to_dict() for c in self.clips],
             "status": self.status,
             "step_statuses": self.step_statuses
         }
@@ -282,7 +295,7 @@ class Project:
         self.name = metadata["name"]
         self.created_at = datetime.fromisoformat(metadata["created_at"])
         self.files = ProjectFileSettings(**metadata["files"])
-        self.highlights = [Highlight(**h) for h in metadata["highlights"]]
+        self.highlights = [Highlight.from_json(h, self) for h in metadata["highlights"]]
 
         comp = [VideoComponent(**c) for c in metadata["video_metadata"]["components"]]
         self.video_metadata = VideoMetadata(comp, metadata["video_metadata"]["top_recommendations"])
@@ -290,7 +303,6 @@ class Project:
         settings_data = {k: v for k, v in metadata["settings"].items() if k in ["aspect_ratio", "resolution"]}
         self.settings = ProjectSettings(**settings_data)
         
-        self.clips = [Clip(**c) for c in metadata["clips"]]
         self.status = metadata.get("status")
         self.step_statuses = metadata.get("step_statuses", {})
 
@@ -298,18 +310,6 @@ class Project:
         self.step_statuses[step] = status
         self.save()
 
-    def set_clips(self, clips: List[Clip]):
-        self.clips = clips
-        self.save()
-
     def set_property(self, key: str, value: Any):
         setattr(self, key, value)
         self.save()
-
-    def delete_clip(self, index: int):
-        if 0 <= index < len(self.clips):
-            clip = self.clips.pop(index)
-            clip_path = Path(self.get_clip_path(clip.filename))
-            if clip_path.exists():
-                clip_path.unlink()
-            self.save()

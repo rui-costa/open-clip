@@ -95,4 +95,10 @@ class OpenCVVideoEngine(VideoEngine):
             x1, y1 = vp.get_crop_coords(subj[0], subj[1])
             
             final_clip = Crop(x1=x1, y1=y1, width=target_w, height=target_h).apply(clip)
-            final_clip.write_videofile(output_path, codec='libx264', audio_codec='aac')
+            final_clip.write_videofile(
+                output_path, 
+                codec='libx264', 
+                audio_codec='aac',
+                temp_audiofile=f"{output_path}.temp.m4a",
+                remove_temp=True
+            )

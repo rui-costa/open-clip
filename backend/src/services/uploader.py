@@ -26,24 +26,26 @@ class Uploader:
         project.set_step_status("upload", "completed")
 
     async def execute(self, project: Project) -> List[Dict[str, Any]]:  # pragma: no cover
-        logger.info(f"Uploader executing for project={project.project_id}, clip_count={len(project.clips)}")
+        logger.info(f"Uploader executing for project={project.project_id}, highlight_count={len(project.highlights)}")
         self.start_service(project)
         client = YoutubeClient()
         
         uploads_list = []
-        for clip in project.clips:
+        for highlight in project.highlights:
+            if not highlight.is_clip_generated or not highlight.generated_clip_filename:
+                continue
+
             # Clips are stored in the project directory
-            clip_path = str(Path("projects") / project.project_id / "clips" / clip.filename)
+            clip_path = str(Path(project.base_directory) / project.project_id / "clips" / highlight.generated_clip_filename)
             
-            logger.info(f"Uploader uploading clip={clip.filename} to YouTube")
-            title = (clip.text[:90] or "Untitled Clip") + " #shorts"
-            logger.info(f"Uploading with title: '{title}'")
+            logger.info(f"Uploader uploading clip={highlight.generated_clip_filename} to YouTube")
+            logger.info(f"Uploading with title: '{highlight.viral_hook_text}'")
             result = client.upload_video(
                 file_path=clip_path,
-                title=title,
-                description=f"Generated clip from {project.name}"
+                title=highlight.viral_hook_text,
+                description=highlight.video_title_for_youtube_short
             )
-            logger.info(f"Uploader uploaded clip={clip.filename}, result_id={result.get('id')}")
+            logger.info(f"Uploader uploaded clip={highlight.generated_clip_filename}, result_id={result.get('id')}")
             uploads_list.append(result)
         self.end_service(project)
         logger.info(f"Uploader completed for project={project.project_id}")

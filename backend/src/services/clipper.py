@@ -15,7 +15,6 @@ class Clipper:
         if os.path.exists(clips_dir):
             shutil.rmtree(clips_dir)
         os.makedirs(clips_dir, exist_ok=True)
-        project.set_property("clips", [])
         project.set_step_status("clipper", "pending")
 
     def start_service(self, project: Project) -> None:
@@ -34,7 +33,6 @@ class Clipper:
             os.makedirs(clips_dir, exist_ok=True)
             logger.info(f"Clipper clips_dir={clips_dir}, exists={os.path.exists(clips_dir)}")
             
-            clips_metadata = []
             for i, short in enumerate(project.highlights):
                 start = max(0.0, float(short.start))
                 end = float(short.end)
@@ -51,20 +49,13 @@ class Clipper:
                     project.settings.resolution
                 )
                 
-                clips_metadata.append(Clip(
-                    filename=filename,
-                    original_start=start,
-                    original_end=end,
-                    processed_start=start,
-                    processed_end=end,
-                    text=short.highlight_text
-                ))
-                # Persist progress
-                project.set_clips(clips_metadata)
+                short.is_clip_generated = True
+                short.generated_clip_filename = filename
+                project.save()
             
-            logger.info(f"Clipper completed for project={project.project_id}, clip_count={len(clips_metadata)}")
+            logger.info(f"Clipper completed for project={project.project_id}")
             self.end_service(project)
-            return [asdict(c) for c in clips_metadata]
+            return [h.to_dict() for h in project.highlights]
         except Exception as e:
             logger.error(f"Error executing clipper: {e}")
             project.set_step_status("clipper", "error")
