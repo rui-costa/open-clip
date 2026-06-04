@@ -113,7 +113,7 @@ export const ProjectHistory: React.FC<ProjectHistoryProps> = ({ projects }) => {
                   opacity: 0.8
                 }}>
                   <span>DATE: {formatDate(project.created_at)}</span>
-                  <span>CLIPS: {project.clips?.length ?? 0}</span>
+                  <span>CLIPS: {project.highlights?.filter((h: any) => h.is_clip_generated).length ?? 0}</span>
                 </div>
               </div>
               <div style={{ 
