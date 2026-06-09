@@ -160,6 +160,12 @@ class SimpleHandler(BaseHTTPRequestHandler):
         
         # Merge file statuses with active processes
         statuses = project.step_statuses.copy()
+        
+        # Add progress metadata
+        total_clips = len(project.highlights)
+        generated_clips = len([h for h in project.highlights if h.is_clip_generated])
+        statuses["progress"] = {"generated": generated_clips, "total": total_clips}
+        
         for k in pipeline_orchestrator.active_processes:
             if k.startswith(project_id):
                 step_name = k.split('_')[-1]
@@ -184,6 +190,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
             self.send_json_response(json.load(f))
 
     def do_GET(self):
+        logger.info(f"GET {self.path}")
         if self.path == '/health': self.handle_get_health()
         elif self.path == '/resolutions': self.handle_get_resolutions()
         elif self.path == '/aspect_ratios': self.handle_get_aspect_ratios()
@@ -226,6 +233,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 remaining -= len(chunk)
 
         self.send_json_response({"status": "uploaded", "path": str(file_path)})
+
     def handle_post_step(self):
         content_length = int(self.headers.get('Content-Length', 0))
         data = json.loads(self.rfile.read(content_length))
@@ -248,6 +256,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
             self.send_cors_error(500, f"Upload failed: {str(e)}")
 
     def do_POST(self):
+        logger.info(f"POST {self.path}")
         if self.path == '/project/init': self.handle_post_init()
         elif self.path.startswith('/project/upload/'): self.handle_post_upload()
         elif self.path == '/project/step': self.handle_post_step()
@@ -270,6 +279,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
     # DELETE Handlers
     def do_DELETE(self):
+        logger.info(f"DELETE {self.path}")
         if self.path.startswith('/project/') and '/clip/' in self.path:
             parts = self.path.split('/')
             project_id = parts[2]
@@ -288,6 +298,33 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Project not found")
         else:
             self.send_error(404)
+
+    def handle_get_execution_status(self):
+        project_id = self.path.split('/')[2]
+        project = Project(project_id)
+        
+        # Merge file statuses with active processes
+        statuses = project.step_statuses.copy()
+        
+        # Add progress metadata
+        total_clips = len(project.highlights)
+        generated_clips = len([h for h in project.highlights if h.is_clip_generated])
+        statuses["progress"] = {"generated": generated_clips, "total": total_clips}
+        
+        for k in pipeline_orchestrator.active_processes:
+            if k.startswith(project_id):
+                step_name = k.split('_')[-1]
+                statuses[step_name] = "running"
+            
+        # Check dependencies for locked steps
+        pipeline_config = pipeline_orchestrator.pipeline_config
+        for step_name, config in pipeline_config['steps'].items():
+            if step_name not in statuses or statuses[step_name] == "todo":
+                dependencies = config.get('depends_on', [])
+                all_deps_met = all(statuses.get(dep) == "completed" for dep in dependencies)
+                statuses[step_name] = "locked" if not all_deps_met else "todo"
+                    
+        self.send_json_response(statuses)
 
 def run():
     httpd = ThreadingHTTPServer(('', 8000), SimpleHandler)
