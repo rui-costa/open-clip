@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class Clipper:
     def reset_metadata(self, project: Project) -> None:
         """Clears the clips/ directory and resets clip state."""
-        clips_dir = os.path.join(os.path.dirname(str(project.get_artifact_path("original_file"))), "clips")
+        clips_dir = os.path.join(project.base_directory, project.project_id, project.clip_base_directory)
         if os.path.exists(clips_dir):
             shutil.rmtree(clips_dir)
         os.makedirs(clips_dir, exist_ok=True)

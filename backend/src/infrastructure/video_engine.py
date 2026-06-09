@@ -50,6 +50,7 @@ class OpenCVVideoEngine(VideoEngine):
         from moviepy import VideoFileClip
         from moviepy.video.fx import Crop
         import json
+        import uuid
         
         with open("backend/config/resolutions.json", "r") as f:
             res_map = json.load(f)
@@ -99,6 +100,6 @@ class OpenCVVideoEngine(VideoEngine):
                 output_path, 
                 codec='libx264', 
                 audio_codec='aac',
-                temp_audiofile=f"{output_path}.temp.m4a",
+                temp_audiofile=f"{output_path}_{uuid.uuid4().hex}.temp.m4a",
                 remove_temp=True
             )
