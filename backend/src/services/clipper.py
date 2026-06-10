@@ -15,7 +15,14 @@ class Clipper:
         if os.path.exists(clips_dir):
             shutil.rmtree(clips_dir)
         os.makedirs(clips_dir, exist_ok=True)
+        
+        # Reset highlight states
+        for h in project.highlights:
+            h.is_clip_generated = False
+            h.generated_clip_filename = None
+        
         project.set_step_status("clipper", "pending")
+        project.save()
 
     def start_service(self, project: Project) -> None:
         """Initializes the service and resets metadata."""
