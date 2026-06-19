@@ -4,12 +4,9 @@ I am providing a podcast transcript in attach and a word map with timestamps. Yo
 
 - A short, catchy Title.
 - The Start Time in [hh:mm:ss]
-- A 1-sentence summary of why this is a distinct chapter.
 
 ## MADATORY OUTPUT
 [start_time] - [chapter title]
-
-
 
 ## EXAMPLE
 00:00 - Intro
