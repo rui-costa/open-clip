@@ -3,7 +3,7 @@ import json
 import os
 import time
 from typing import Any, Dict
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+from tenacity import RetryError, retry, stop_after_attempt, wait_exponential, retry_if_exception
 import httpx
 
 # Attempting safe imports
@@ -17,6 +17,18 @@ except ImportError:
     ServerError = None
 
 logger = logging.getLogger(__name__)
+
+
+def describe_error(exception: BaseException) -> str:
+    """Renders an SDK error with its status code and server message, which repr() alone hides."""
+    if isinstance(exception, RetryError) and exception.last_attempt.failed:
+        inner = exception.last_attempt.exception()
+        return f"gave up after {exception.last_attempt.attempt_number} attempts: {describe_error(inner)}"
+    code = getattr(exception, "code", None)
+    status = getattr(exception, "status", None)
+    message = getattr(exception, "message", None) or str(exception)
+    parts = [p for p in (f"HTTP {code}" if code else None, status, message) if p]
+    return f"{type(exception).__name__}: " + " | ".join(parts)
 
 
 def _is_retryable(exception: BaseException) -> bool:
@@ -66,11 +78,12 @@ class GeminiClient:
 
     @retry(
         stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=2, min=4, max=60),
+        wait=wait_exponential(multiplier=2, min=15, max=120),
         retry=retry_if_exception(_is_retryable),
+        reraise=True,
         before_sleep=lambda retry_state: logger.warning(
             f"Retryable error (attempt {retry_state.attempt_number}), retrying in "
-            f"{retry_state.next_action.sleep:.1f}s: {retry_state.outcome.exception()}"
+            f"{retry_state.next_action.sleep:.1f}s: {describe_error(retry_state.outcome.exception())}"
         )
     )
     def generate_content(self, prompt: str, is_json: bool = True) -> str:

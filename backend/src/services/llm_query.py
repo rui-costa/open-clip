@@ -22,7 +22,7 @@ import logging
 from typing import Dict, Any, List
 from backend.src.dataclasses.data import Project, Highlight, Highlights, VideoMetadata, VideoComponent
 from backend.src.infrastructure.credentials import LocalCredentialProvider
-from backend.src.infrastructure.gemini_client import GeminiClient
+from backend.src.infrastructure.gemini_client import GeminiClient, describe_error
 
 logger = logging.getLogger(__name__)
 
@@ -100,12 +100,12 @@ class LLMQuery:
             logger.info(f"LLMQuery completed task={self.task_name} for project={project.project_id}")
             return {"status": "completed"}
         except Exception as e:
-            logger.error(f"Error executing {self.task_name}: {e}")
+            logger.error(f"Error executing {self.task_name}: {describe_error(e)}", exc_info=True)
             if self.task_name == "extract_highlights":
                 project.set_step_status("highlights", "error")
             elif self.task_name == "generate_metadata":
                 project.set_step_status("metadata", "error")
-            return {"status": "error", "message": str(e)}
+            return {"status": "error", "message": describe_error(e)}
 
     def end_service(self, project: Project) -> None:
         """Finalizes the service."""
