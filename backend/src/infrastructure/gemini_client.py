@@ -1,18 +1,34 @@
 import logging
 import json
 import os
+import time
 from typing import Any, Dict
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 import httpx
 
 # Attempting safe imports
 try:
     import google
     from google.genai import Client as GenAIClient
+    from google.genai.errors import ClientError, ServerError
 except ImportError:
     GenAIClient = None
+    ClientError = None
+    ServerError = None
 
 logger = logging.getLogger(__name__)
+
+
+def _is_retryable(exception: BaseException) -> bool:
+    """Returns True for transient errors that should be retried: network errors, 429 rate limits, and 5xx server errors."""
+    if isinstance(exception, httpx.ReadError):
+        return True
+    if ClientError is not None and isinstance(exception, ClientError):
+        return getattr(exception, "code", 0) == 429
+    if ServerError is not None and isinstance(exception, ServerError):
+        return True
+    return False
+
 
 class GeminiClient:
     """
@@ -49,9 +65,13 @@ class GeminiClient:
         raise ImportError("No suitable Google client SDK installed")
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type(httpx.ReadError)
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2, min=4, max=60),
+        retry=retry_if_exception(_is_retryable),
+        before_sleep=lambda retry_state: logger.warning(
+            f"Retryable error (attempt {retry_state.attempt_number}), retrying in "
+            f"{retry_state.next_action.sleep:.1f}s: {retry_state.outcome.exception()}"
+        )
     )
     def generate_content(self, prompt: str, is_json: bool = True) -> str:
         config = {"response_mime_type": "application/json"} if is_json else {}

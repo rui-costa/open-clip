@@ -4,7 +4,7 @@ import logging
 from dataclasses import asdict
 from typing import List, Dict, Any, Tuple
 from backend.src.dataclasses.data import Project, Clip
-from backend.src.infrastructure.video_engine import OpenCVVideoEngine, Viewport
+from backend.src.infrastructure.video_engine import OpenCVVideoEngine
 
 logger = logging.getLogger(__name__)
 
