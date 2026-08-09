@@ -63,10 +63,18 @@ class OpenCVVideoEngine(VideoEngine):
         cap.release()
 
         # Resolve Target Dimensions
+        ar_w, ar_h = map(int, aspect_ratio.split(':'))
         if resolution == "keep original":
-            target_w, target_h = src_w, src_h
+            # Use source dimensions but apply the aspect ratio
+            if ar_w / ar_h >= src_w / src_h:
+                target_w, target_h = src_w, int(src_w * ar_h / ar_w)
+            else:
+                target_w, target_h = int(src_h * ar_w / ar_h), src_h
         else:
             target_w, target_h = map(int, res_map.get(resolution, resolution).split('x'))
+        # Ensure dimensions are even (required by most codecs)
+        target_w = target_w - (target_w % 2)
+        target_h = target_h - (target_h % 2)
 
         # Smart Center
         subj_x, subj_y = self.get_subject_center(input_path, start) or (0.5, 0.5)
