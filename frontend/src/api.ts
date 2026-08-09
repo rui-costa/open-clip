@@ -110,6 +110,12 @@ export const getProjectMetadata = async (projectId: string) => {
   return apiRequest(`/project/${projectId}`);
 };
 
+// Timeline marker EDL for DaVinci Resolve. `recordStart` must match the
+// timecode the Resolve timeline starts at (default 01:00:00:00).
+export const getMarkerEdlUrl = (projectId: string, recordStart = '01:00:00:00') => {
+  return `${BASE_URL}/project/${projectId}/markers.edl?start=${encodeURIComponent(recordStart)}`;
+};
+
 export const getPipelineConfig = async () => {
   return apiRequest('/pipeline/config');
 };
@@ -146,6 +152,13 @@ export const executePipelineStep = async (projectId: string, step: string, actio
 export const uploadClip = async (projectId: string, clipIndex: number) => {
   return apiRequest(`/project/${projectId}/clip/${clipIndex}/upload`, {
     method: 'POST',
+  });
+};
+
+export const updateProjectSettings = async (projectId: string, settings: { resolution?: string; aspect_ratio?: string }) => {
+  return apiRequest(`/project/${projectId}/settings`, {
+    method: 'PUT',
+    body: JSON.stringify(settings),
   });
 };
 

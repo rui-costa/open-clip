@@ -6,9 +6,11 @@ from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from dataclasses import asdict
+from urllib.parse import urlparse, parse_qs
 
 from backend.src.dataclasses.data import Project
 from backend.src.registry import list_projects, delete_project
+from backend.src.services.marker_exporter import MarkerExporter, DEFAULT_RECORD_START
 from backend.src.orchestrator import PipelineOrchestrator
 from backend.src.settings_manager import settings_manager
 
@@ -73,7 +75,7 @@ pipeline_orchestrator = PipelineOrchestrator(active_processes=active_processes)
 class SimpleHandler(BaseHTTPRequestHandler):
     def send_cors_headers(self):
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'POST, GET, DELETE, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'POST, GET, PUT, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-File-Name')
 
     def send_json_response(self, data, code=200):
@@ -184,6 +186,31 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     
         self.send_json_response(statuses)
 
+    def handle_get_markers_edl(self):
+        parsed = urlparse(self.path)
+        project_id = parsed.path.split('/')[2]
+        params = parse_qs(parsed.query)
+        record_start = params.get('start', [DEFAULT_RECORD_START])[0]
+
+        try:
+            project = Project(project_id)
+            exporter = MarkerExporter(record_start=record_start)
+            edl = exporter.export(project).read_text(encoding="utf-8")
+        except Exception as e:
+            logger.error(f"Failed to build EDL for {project_id}: {e}")
+            self.send_cors_error(500, f"Failed to build EDL: {str(e)}")
+            return
+
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in (project.name or project_id))
+        body = edl.encode('utf-8')
+        self.send_response(200)
+        self.send_cors_headers()
+        self.send_header('Content-type', 'text/plain; charset=utf-8')
+        self.send_header('Content-Disposition', f'attachment; filename="{safe_name}_markers.edl"')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def handle_get_aspect_ratios(self):
         with open("backend/config/aspect_ratios.json", "r") as f:
             self.send_json_response(json.load(f))
@@ -204,6 +231,8 @@ class SimpleHandler(BaseHTTPRequestHandler):
         elif self.path.startswith('/projects/static/'): self.handle_get_project_file()
         elif self.path.startswith('/project/') and self.path.endswith('/execution_status'):
             self.handle_get_execution_status()
+        elif self.path.startswith('/project/') and urlparse(self.path).path.endswith('/markers.edl'):
+            self.handle_get_markers_edl()
         elif self.path.startswith('/project/'):
             self.handle_get_project_detail()
         else: self.send_error(404)
@@ -257,6 +286,29 @@ class SimpleHandler(BaseHTTPRequestHandler):
             self.send_json_response({"status": "success", "video_url": result["url"]})
         except Exception as e:
             self.send_cors_error(500, f"Upload failed: {str(e)}")
+
+    def handle_put_project_settings(self):
+        parts = self.path.split('/')
+        project_id = parts[2]
+        content_length = int(self.headers.get('Content-Length', 0))
+        data = json.loads(self.rfile.read(content_length))
+        try:
+            project = Project(project_id)
+            if 'resolution' in data:
+                project.settings.resolution = data['resolution']
+            if 'aspect_ratio' in data:
+                project.settings.aspect_ratio = data['aspect_ratio']
+            project.save()
+            self.send_json_response({"status": "success", "settings": project.settings.to_dict()})
+        except Exception as e:
+            self.send_cors_error(500, f"Failed to update settings: {str(e)}")
+
+    def do_PUT(self):
+        logger.info(f"PUT {self.path}")
+        if self.path.startswith('/project/') and self.path.endswith('/settings'):
+            self.handle_put_project_settings()
+        else:
+            self.send_error(404)
 
     def do_POST(self):
         logger.info(f"POST {self.path}")

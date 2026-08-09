@@ -32,6 +32,7 @@ class ProjectFileSettings:
     transcription_file: str = "transcription.txt"
     word_map_file: str = "word_map.csv"
     original_file: str = "original.mp4"
+    marker_file: str = "markers.edl"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

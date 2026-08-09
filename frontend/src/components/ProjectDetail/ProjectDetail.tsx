@@ -1,10 +1,10 @@
 import React, { useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '../Button';
 import { PipelineController } from '../PipelineController/PipelineController';
 import type { StepStatus } from '../PipelineController/PipelineController';
 import { ClipManager } from '../ClipManagement/ClipManager';
-import { getStepStatus as fetchStepStatus } from '../../api';
+import { getStepStatus as fetchStepStatus, updateProjectSettings, getMarkerEdlUrl } from '../../api';
 
 interface ProjectDetailProps {
   metadata: any;
@@ -19,6 +19,33 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
   const sourceVideoRef = useRef<HTMLVideoElement>(null);
   const [showMetadata, setShowMetadata] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const queryClient = useQueryClient();
+
+  const { data: resolutionsData } = useQuery({
+    queryKey: ['resolutions'],
+    queryFn: async () => {
+      const res = await fetch('http://localhost:8000/resolutions');
+      const data = await res.json();
+      return Object.keys(data);
+    },
+  });
+
+  const { data: aspectRatiosData } = useQuery({
+    queryKey: ['aspectRatios'],
+    queryFn: async () => {
+      const res = await fetch('http://localhost:8000/aspect_ratios');
+      const data = await res.json();
+      return Object.keys(data);
+    },
+  });
+
+  const settingsMutation = useMutation({
+    mutationFn: (settings: { resolution?: string; aspect_ratio?: string }) =>
+      updateProjectSettings(metadata.project_id, settings),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projectMetadata', metadata.project_id] });
+    },
+  });
 
   const { data: allStatuses } = useQuery({
     queryKey: ['executionStatus', metadata.project_id],
@@ -136,13 +163,36 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
           }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
               <h2 title={`SN: ${displayMetadata.project_id}`} style={{ cursor: 'help', margin: 0 }}>{displayMetadata.name}</h2>
-              <div style={{ display: 'flex', gap: 'var(--space-md)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  <span style={{ display: 'flex', gap: '4px' }}>
-                      Resolution: <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>{displayMetadata.settings?.resolution || 'N/A'}</span>
+              <div style={{ display: 'flex', gap: 'var(--space-md)', fontSize: '0.8rem', color: 'var(--text-muted)', alignItems: 'center' }}>
+                  <span style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                      Resolution:
+                      <select
+                        value={displayMetadata.settings?.resolution || 'keep original'}
+                        onChange={(e) => settingsMutation.mutate({ resolution: e.target.value })}
+                        style={{ fontSize: '0.8rem', fontWeight: 600, background: 'var(--bg-secondary)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '2px 4px' }}
+                      >
+                        <option value="keep original">keep original</option>
+                        {resolutionsData?.map(opt => <option key={opt} value={opt}>{opt.toUpperCase()}</option>)}
+                      </select>
                   </span>
-                  <span style={{ display: 'flex', gap: '4px' }}>
-                      Aspect Ratio: <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>{displayMetadata.settings?.aspect_ratio || 'N/A'}</span>
+                  <span style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                      Aspect Ratio:
+                      <select
+                        value={displayMetadata.settings?.aspect_ratio || 'keep original'}
+                        onChange={(e) => settingsMutation.mutate({ aspect_ratio: e.target.value })}
+                        style={{ fontSize: '0.8rem', fontWeight: 600, background: 'var(--bg-secondary)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '2px 4px' }}
+                      >
+                        <option value="keep original">keep original</option>
+                        {aspectRatiosData?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                      </select>
                   </span>
+                  <Button
+                    variant="ghost"
+                    onClick={() => onExecuteAction('START', 'clipper')}
+                    style={{ fontSize: '0.7rem', padding: '2px 8px' }}
+                  >
+                    Regenerate Clips
+                  </Button>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
@@ -152,6 +202,15 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
                 style={{ fontSize: '0.8rem', padding: '0.5rem 1rem' }}
               >
                 {showMetadata ? 'Hide Metadata' : 'View Metadata'}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => { window.location.href = getMarkerEdlUrl(displayMetadata.project_id); }}
+                disabled={!displayMetadata.highlights?.length}
+                title="Download timeline markers as EDL for DaVinci Resolve (timeline must start at 01:00:00:00)"
+                style={{ fontSize: '0.8rem', padding: '0.5rem 1rem' }}
+              >
+                Export Markers (Resolve)
               </Button>
               <Button 
                 variant="danger"
