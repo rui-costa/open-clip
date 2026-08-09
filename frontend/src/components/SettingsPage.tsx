@@ -45,24 +45,32 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
   const [ytSecrets, setYtSecrets] = useState('');
   const [jsonError, setJsonError] = useState(false);
 
+  const debouncedApiKey = useDebounce(apiKey, 500);
+  const debouncedYtSecrets = useDebounce(ytSecrets, 500);
+
+  // Track whether the local state has been initialized from server data
+  const [initialized, setInitialized] = useState(false);
+
   useEffect(() => {
     if (data) {
       setApiKey(data.settings?.gemini_api_key || '');
       setYtSecrets(data.settings?.youtube_client_secrets ? JSON.stringify(data.settings.youtube_client_secrets, null, 2) : '');
+      setInitialized(true);
     }
   }, [data]);
 
-  const debouncedApiKey = useDebounce(apiKey, 500);
-  const debouncedYtSecrets = useDebounce(ytSecrets, 500);
-
   useEffect(() => {
-    if (data && debouncedApiKey !== (data?.settings?.gemini_api_key || '')) {
+    if (!initialized || !data) return;
+    const serverValue = data?.settings?.gemini_api_key || '';
+    if (debouncedApiKey !== serverValue) {
       updateMutation.mutate({ settings: { gemini_api_key: debouncedApiKey } });
     }
-  }, [debouncedApiKey, data]);
+  }, [debouncedApiKey]);
 
   useEffect(() => {
-    if (data && debouncedYtSecrets !== (data?.settings?.youtube_client_secrets ? JSON.stringify(data.settings.youtube_client_secrets, null, 2) : '')) {
+    if (!initialized || !data) return;
+    const serverValue = data?.settings?.youtube_client_secrets ? JSON.stringify(data.settings.youtube_client_secrets, null, 2) : '';
+    if (debouncedYtSecrets !== serverValue) {
       try {
         const parsed = JSON.parse(debouncedYtSecrets);
         updateMutation.mutate({ settings: { youtube_client_secrets: parsed } });
@@ -71,7 +79,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
         setJsonError(true);
       }
     }
-  }, [debouncedYtSecrets, data]);
+  }, [debouncedYtSecrets]);
 
   if (isLoading) return <div style={{ padding: 'var(--space-md)', fontWeight: 'bold', textTransform: 'uppercase' }}>Loading settings...</div>;
 
@@ -186,8 +194,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
           />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
-          <label style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>YouTube Client Secrets (JSON File):</label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+          <label style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>YouTube Client Secrets (JSON):</label>
+          <textarea
+            value={ytSecrets}
+            onChange={(e) => setYtSecrets(e.target.value)}
+            style={{ ...inputStyle, minHeight: '150px', fontFamily: 'monospace' }}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginTop: 'var(--space-xs)' }}>
             <input 
               type="file" 
               id="file-input"
@@ -200,6 +213,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
                   reader.onload = (event) => {
                     try {
                       const parsed = JSON.parse(event.target?.result as string);
+                      setYtSecrets(JSON.stringify(parsed, null, 2));
                       updateMutation.mutate({ settings: { youtube_client_secrets: parsed } });
                       setJsonError(false);
                     } catch (e) {
@@ -219,9 +233,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
                 textTransform: 'uppercase',
                 cursor: 'pointer',
                 background: 'var(--bg)',
+                fontSize: '0.8rem',
               }}
             >
-              Choose File
+              Choose JSON File
             </label>
             <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
               {settings.youtube_client_secrets ? 'Config loaded successfully' : 'No file selected'}
@@ -242,7 +257,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
           <label style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Resolution:</label>
           <select 
             value={settings.video_defaults?.resolution || 'keep original'}
-            onChange={(e) => updateMutation.mutate({ settings: { ...settings, video_defaults: { ...settings.video_defaults, resolution: e.target.value } } })}
+            onChange={(e) => updateMutation.mutate({ settings: { video_defaults: { ...settings.video_defaults, resolution: e.target.value } } })}
             style={inputStyle}
           >
             <option value="keep original">keep original</option>
@@ -253,12 +268,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
           <label style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Aspect Ratio:</label>
           <select 
             value={settings.video_defaults?.aspect_ratio || 'keep original'}
-            onChange={(e) => updateMutation.mutate({ settings: { ...settings, video_defaults: { ...settings.video_defaults, aspect_ratio: e.target.value } } })}
+            onChange={(e) => updateMutation.mutate({ settings: { video_defaults: { ...settings.video_defaults, aspect_ratio: e.target.value } } })}
             style={inputStyle}
           >
             <option value="keep original">keep original</option>
             {aspectRatiosData?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
           </select>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+          <label style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Encoder Codec (e.g. h264_videotoolbox):</label>
+          <input 
+            type="text"
+            value={settings.codec || 'libx264'}
+            onChange={(e) => updateMutation.mutate({ settings: { codec: e.target.value } })}
+            style={inputStyle}
+          />
         </div>
       </section>
 

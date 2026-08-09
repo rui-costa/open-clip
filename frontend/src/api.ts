@@ -125,6 +125,13 @@ export const updateSettings = async (payload: { settings: any, pipeline_config?:
   });
 };
 
+export const updateCodec = async (codec: string) => {
+  return apiRequest('/settings/codec', {
+    method: 'POST',
+    body: JSON.stringify({ codec }),
+  });
+};
+
 export const getActiveProcesses = async (): Promise<string[]> => {
   return apiRequest('/active_processes');
 };

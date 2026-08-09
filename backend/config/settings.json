@@ -2,6 +2,6 @@
   "theme": "dark",
   "pipeline_defaults": {},
   "model": "base",
-  "new_key": "value",
-  "log_level": "DEBUG"
+  "log_level": "DEBUG",
+  "codec": "h264_videotoolbox"
 }

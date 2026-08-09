@@ -99,8 +99,11 @@ class SimpleHandler(BaseHTTPRequestHandler):
     def handle_get_processes(self): self.send_json_response(list(pipeline_orchestrator.active_processes.keys()))
     def handle_get_config(self): self.send_json_response(pipeline_orchestrator.pipeline_config)
     def handle_get_settings(self):
+        logger.info("handle_get_settings called")
+        all_settings = settings_manager.get_all()
+        logger.info(f"handle_get_settings retrieved: {all_settings.keys()}")
         self.send_json_response({
-            "settings": settings_manager.get_all(),
+            "settings": all_settings,
             "pipeline_config": pipeline_orchestrator.pipeline_config
         })
 
@@ -261,6 +264,12 @@ class SimpleHandler(BaseHTTPRequestHandler):
         elif self.path.startswith('/project/upload/'): self.handle_post_upload()
         elif self.path == '/project/step': self.handle_post_step()
         elif self.path.endswith('/upload'): self.handle_post_upload_clip()
+        elif self.path == '/settings':
+             content_length = int(self.headers.get('Content-Length', 0))
+             data = json.loads(self.rfile.read(content_length))
+             settings = data.get("settings", {})
+             settings_manager.update_batch(settings)
+             self.send_json_response({"status": "success"})
         elif self.path == '/settings/log_level':
              content_length = int(self.headers.get('Content-Length', 0))
              data = json.loads(self.rfile.read(content_length))
