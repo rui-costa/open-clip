@@ -42,6 +42,8 @@ Ensure you have [Docker](https://www.docker.com/) and [Docker Compose](https://d
 
 *   **Project Management**: Organize, view, and track your video projects.
 *   **Automated Clipping**: Efficient video splitting and processing.
+*   **Animated Captions**: Word-by-word karaoke subtitles built from the transcript, styled and previewed in the browser before they are burned into a clip.
+*   **Shorts Thumbnails**: Every clip shows the still it would be published with — by default its first frame, with the clip's title drawn on and no subtitles — drawn live in the browser, with any frame choosable instead, subtitles shown and extra text added. The picture itself is rendered at upload.
 *   **Metadata Management**: Track project details via JSON metadata.
 *   **Containerized Workflow**: Simple setup using Docker.
 
