@@ -8,33 +8,79 @@ from backend.src.dataclasses.data import Project
 
 from backend.src.services.transcriber import Transcriber
 from backend.src.services.llm_query import LLMQuery
+from backend.src.services.llm_tasks import discover_tasks
 from backend.src.services.clipper import Clipper
-from backend.src.services.uploader import Uploader
+from backend.src.services.thumbnailer import Thumbnailer
+from backend.src.services.uploader import Uploader, UploadInProgressError
 
 logger = logging.getLogger(__name__)
 
+
+class ClipRegenerationInProgressError(Exception):
+    """A clip was asked to re-cut while its previous re-cut is still running."""
+
+
+class ThumbnailInProgressError(Exception):
+    """A thumbnail was asked for while the previous one is still rendering."""
+
+
 class PipelineOrchestrator:
-    def __init__(self, config_path: str = "backend/config/pipeline.json", active_processes: Dict[str, Any] = None, services: Dict[str, Any] = None):
+    def __init__(self, config_path: str = "backend/config/pipeline.json", active_processes: Dict[str, Any] = None, services: Dict[str, Any] = None, thumbnailer: Optional[Thumbnailer] = None):
         self.config_path = Path(config_path)
+        # Not a pipeline step and deliberately not in `services`: a thumbnail
+        # is made per clip, on request or alongside a cut, never as a stage of
+        # its own.
+        self.thumbnailer = thumbnailer or Thumbnailer()
+        self.llm_tasks = discover_tasks()
         self.pipeline_config = self._load_pipeline_config()
         self.active_project_orchestrators: Dict[str, threading.Thread] = {}
         self.active_processes = active_processes if active_processes is not None else {}
         self._lock = threading.Lock()
-        
-        # Injectable services
-        self.services = services or {
+
+        # Injectable services. Every discovered prompt contributes its own
+        # LLMQuery, so a new prompt file needs no wiring here.
+        self.services = services or self._build_services()
+
+    def _build_services(self) -> Dict[str, Any]:
+        services: Dict[str, Any] = {
             "transcription": Transcriber(),
-            "highlights": LLMQuery(task_name="extract_highlights"),
-            "metadata": LLMQuery(task_name="generate_metadata"),
             "clipper": Clipper(),
-            "upload": Uploader()
+            "upload": Uploader(),
         }
+        for name, task in self.llm_tasks.items():
+            services[name] = LLMQuery(task_name=name, task=task)
+        return services
 
     def _load_pipeline_config(self) -> Dict[str, Any]:
         if not self.config_path.exists():
             raise FileNotFoundError(f"Pipeline config not found at {self.config_path}")
         with open(self.config_path, 'r') as f:
-            return json.load(f)
+            config = json.load(f)
+        return self._merge_llm_tasks(config)
+
+    def _merge_llm_tasks(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Adds discovered prompt tasks to the pipeline so each one gets a button.
+
+        pipeline.json stays authoritative for the steps it already declares; a
+        prompt with no entry there is appended using the defaults from its task
+        definition.
+        """
+        steps = config.setdefault('steps', {})
+        order = config.setdefault('execution_order', list(steps))
+        for name, task in self.llm_tasks.items():
+            if name in steps:
+                # Declared in pipeline.json, but the UI still needs to know it
+                # belongs behind the single LLM button.
+                steps[name]['llm'] = True
+                continue
+            steps[name] = task.to_step_config()
+            if name not in order:
+                # Placed straight after the last step it depends on, so the
+                # button row still reads as the flow it belongs to.
+                positions = [order.index(dep) for dep in task.depends_on if dep in order]
+                order.insert(max(positions) + 1 if positions else len(order), name)
+            logger.info(f"Registered LLM task '{name}' from {task.template} as a pipeline step")
+        return config
 
     def _exec_service(self, project: Project, step_name: str):
         """Helper to run service execution synchronously within a thread."""
@@ -50,13 +96,248 @@ class PipelineOrchestrator:
             if project.step_statuses.get(step_name) == "error":
                 raise RuntimeError(f"Service {step_name} failed.")
 
+    def _register_process(self, key: str):
+        with self._lock:
+            self.active_processes[key] = time.time()
+
+    def _unregister_process(self, key: str):
+        with self._lock:
+            self.active_processes.pop(key, None)
+
+    def _has_running_step(self, project_id: str) -> bool:
+        prefix = f"{project_id}_"
+        with self._lock:
+            return any(
+                key.startswith(prefix) and not key.endswith("_pipeline")
+                for key in self.active_processes
+            )
+
+    def _dependents(self, step_name: str) -> List[str]:
+        """Every step downstream of `step_name`, directly or through another step."""
+        steps = self.pipeline_config['steps']
+        stale = {step_name}
+        # Iterated to a fixed point rather than walked in execution order, so a
+        # step declared out of dependency order is still reached.
+        changed = True
+        while changed:
+            changed = False
+            for name, config in steps.items():
+                if name in stale:
+                    continue
+                if any(dep in stale for dep in config.get('depends_on', [])):
+                    stale.add(name)
+                    changed = True
+        order = self.pipeline_config.get('execution_order', list(steps))
+        return [name for name in order if name in stale and name != step_name]
+
+    def _invalidate_dependents(self, project: Project, step_name: str):
+        """Marks everything downstream of a re-run step as not done.
+
+        Re-running highlights replaces the list every clip was cut from, so the
+        clips on disk belong to highlights that no longer exist. Without this
+        the clipper keeps its "completed" badge while its output has silently
+        gone, and the orphaned files stay in clips/ forever.
+        """
+        for name in self._dependents(step_name):
+            if f"{project.project_id}_{name}" in self.active_processes:
+                # Already running: it will write its own status, and resetting
+                # it here would only fight that.
+                continue
+            if project.step_statuses.get(name) in (None, "todo", "locked"):
+                continue
+            service = self.services.get(name)
+            if service is not None and hasattr(service, 'reset_metadata'):
+                service.reset_metadata(project)
+            # reset_metadata leaves its own step "pending"; "todo" is what
+            # execution_status re-evaluates against the dependency graph, so a
+            # step whose inputs just vanished shows as locked rather than ready.
+            project.set_step_status(name, "todo")
+            logger.info(f"Reset step '{name}' for {project.project_id}: '{step_name}' is re-running")
+
     def run_step(self, project_id: str, step_name: str):
         """Triggers a step in the background."""
+        key = f"{project_id}_{step_name}"
+        if key in self.active_processes:
+            logger.info(f"Step {step_name} already running for {project_id}, ignoring trigger.")
+            return
+
         project = Project(project_id)
-        thread = threading.Thread(target=self._exec_service, args=(project, step_name))
+        self._invalidate_dependents(project, step_name)
+        # Registered before the thread starts so the request that triggered the
+        # step returns with the process already visible on /active_processes.
+        # The frontend gates its polling on that list, so a late registration
+        # means the UI never starts refreshing.
+        self._register_process(key)
+
+        def runner():
+            try:
+                self._exec_service(project, step_name)
+            except Exception:
+                logger.exception(f"Step {step_name} failed for project {project_id}")
+            finally:
+                self._unregister_process(key)
+
+        thread = threading.Thread(target=runner)
         with self._lock:
             self.active_project_orchestrators[project_id] = thread
         thread.start()
+
+    def upload_clip(self, project_id: str, clip_index: int) -> str:
+        """Re-cuts one clip and publishes it in the background; returns its job key.
+
+        Backgrounded rather than synchronous, because the upload now starts with
+        a fresh cut of the clip and an encode outlives a browser request. What
+        the user is owed is still the outcome, so it is written onto the
+        highlight — the published URL, or `upload_error` — and read back when
+        this key leaves /active_processes.
+
+        The connection to YouTube is opened here rather than in the thread, so
+        an authorisation that cannot publish is reported to the click that asked
+        rather than after minutes of encoding.
+
+        Registered as an active process so a second request for the same clip is
+        refused rather than publishing it twice — the guard in the UI covers one
+        browser tab, and this covers the rest.
+
+        Raises IndexError when there is no highlight at `clip_index`,
+        UploadInProgressError when this clip is already going up, and
+        ClipRegenerationInProgressError when a re-cut of it is already running.
+        """
+        project = Project(project_id)
+        if clip_index < 0 or clip_index >= len(project.highlights):
+            raise IndexError(f"No highlight at index {clip_index}")
+
+        uploader = self.services.get("upload")
+        if uploader is None:
+            raise RuntimeError("No upload service is configured.")
+
+        key = f"{project_id}_upload_clip_{clip_index}"
+        with self._lock:
+            if key in self.active_processes:
+                raise UploadInProgressError("This clip is already being uploaded.")
+            # The upload cuts the clip itself, so it writes the same file a
+            # re-cut does. Two of them at once would interleave in it.
+            if f"{project_id}_clip_{clip_index}" in self.active_processes:
+                raise ClipRegenerationInProgressError(
+                    "This clip is being re-cut. Wait for that to finish, then upload it."
+                )
+            self.active_processes[key] = time.time()
+
+        try:
+            client = uploader.open_client()
+        except Exception:
+            self._unregister_process(key)
+            raise
+        # Whatever the last attempt failed with is about to be answered by this
+        # one, and a stale message is what the page would otherwise read back.
+        uploader.begin_attempt(project, clip_index)
+
+        def runner():
+            try:
+                uploader.upload_one(project, clip_index, client=client)
+            except Exception as e:
+                logger.exception(f"Uploading clip {clip_index} failed for project {project_id}")
+                uploader.record_failure(project, clip_index, str(e) or e.__class__.__name__)
+            finally:
+                self._unregister_process(key)
+
+        thread = threading.Thread(target=runner)
+        thread.start()
+        return key
+
+    def upload_thumbnail(self, project_id: str, clip_index: int) -> Dict[str, Any]:
+        """Sets one published clip's current thumbnail on its video.
+
+        Synchronous, unlike `upload_clip`: nothing is cut and nothing is
+        encoded, only one still is sent about a video that is already public,
+        so the user who pressed the button can be handed the outcome. Shares
+        that method's process key, so a clip cannot be published and
+        re-thumbnailed at the same moment.
+        """
+        key = f"{project_id}_upload_clip_{clip_index}"
+        with self._lock:
+            if key in self.active_processes:
+                raise UploadInProgressError("This clip is already being uploaded.")
+            self.active_processes[key] = time.time()
+
+        try:
+            project = Project(project_id)
+            uploader = self.services.get("upload")
+            if uploader is None:
+                raise RuntimeError("No upload service is configured.")
+            return uploader.upload_thumbnail(project, clip_index)
+        finally:
+            self._unregister_process(key)
+
+    def regenerate_clip(self, project_id: str, clip_index: int) -> str:
+        """Re-cuts one clip in the background and returns the job key to watch.
+
+        Backgrounded like `upload_clip`, which begins with this same cut: an
+        encode can run for minutes, which is longer than a browser will hold a
+        request open. The key is registered before this returns, so the page that
+        triggered it sees the job on /active_processes on its first poll rather
+        than deciding it has already finished.
+
+        Raises IndexError when there is no highlight at `clip_index`,
+        ClipRegenerationInProgressError when this clip is already being cut, and
+        UploadInProgressError while it is going up — an upload cuts the clip
+        first, so it is already writing the file this would write.
+        """
+        project = Project(project_id)
+        if clip_index < 0 or clip_index >= len(project.highlights):
+            raise IndexError(f"No highlight at index {clip_index}")
+
+        key = f"{project_id}_clip_{clip_index}"
+        with self._lock:
+            if key in self.active_processes:
+                raise ClipRegenerationInProgressError("This clip is already being re-cut.")
+            if f"{project_id}_upload_clip_{clip_index}" in self.active_processes:
+                raise UploadInProgressError(
+                    "This clip is being uploaded, which re-cuts it. Wait for that to finish."
+                )
+            self.active_processes[key] = time.time()
+
+        clipper = self.services.get("clipper")
+        if clipper is None:
+            self._unregister_process(key)
+            raise RuntimeError("No clipper service is configured.")
+
+        def runner():
+            try:
+                clipper.render_one(project, clip_index)
+            except Exception:
+                logger.exception(f"Regenerating clip {clip_index} failed for project {project_id}")
+            finally:
+                self._unregister_process(key)
+
+        thread = threading.Thread(target=runner)
+        thread.start()
+        return key
+
+    def generate_thumbnail(self, project_id: str, clip_index: int) -> Dict[str, Any]:
+        """Renders one clip's thumbnail and returns what it produced.
+
+        Synchronous, unlike a re-cut: this is one frame and the picture is what
+        the user is waiting to look at, so a job id would only make the page
+        poll for something that has already happened.
+
+        Registered as an active process all the same, so two clicks do not run
+        two ffmpeg passes over the same output file.
+
+        Raises IndexError when there is no highlight at `clip_index`, and
+        ThumbnailInProgressError while one is already being made.
+        """
+        key = f"{project_id}_thumbnail_{clip_index}"
+        with self._lock:
+            if key in self.active_processes:
+                raise ThumbnailInProgressError("This thumbnail is already being made.")
+            self.active_processes[key] = time.time()
+
+        try:
+            project = Project(project_id)
+            return self.thumbnailer.generate(project, clip_index).to_dict()
+        finally:
+            self._unregister_process(key)
 
     def run_pipeline(self, project_id: str):
         """Triggers the full pipeline in the background using dependency graph."""
@@ -65,6 +346,9 @@ class PipelineOrchestrator:
         for service in self.services.values():
             if hasattr(service, 'reset_metadata'):
                 service.reset_metadata(project)
+
+        pipeline_key = f"{project_id}_pipeline"
+        self._register_process(pipeline_key)
 
         def pipeline_runner():
             steps = self.pipeline_config['steps']
@@ -79,6 +363,7 @@ class PipelineOrchestrator:
                 if all(project.step_statuses.get(s) == "completed" for s in steps):
                     break
 
+                triggered = False
                 for step_name, config in steps.items():
                     # Only trigger if status is not started
                     if project.step_statuses.get(step_name) not in [None, "todo", "pending"]:
@@ -90,10 +375,25 @@ class PipelineOrchestrator:
                         # Only trigger auto-run
                         if config.get('auto_run', True):
                             self.run_step(project.project_id, step_name)
+                            triggered = True
+
+                # Nothing left to trigger and nothing still running means the
+                # pipeline is waiting on a manual step. Stop instead of holding
+                # the process registration open forever.
+                if not triggered and not self._has_running_step(project.project_id):
+                    break
 
                 time.sleep(1.0)
 
-        thread = threading.Thread(target=pipeline_runner)
+        def runner():
+            try:
+                pipeline_runner()
+            except Exception:
+                logger.exception(f"Pipeline failed for project {project_id}")
+            finally:
+                self._unregister_process(pipeline_key)
+
+        thread = threading.Thread(target=runner)
         with self._lock:
             self.active_project_orchestrators[project_id] = thread
         thread.start()

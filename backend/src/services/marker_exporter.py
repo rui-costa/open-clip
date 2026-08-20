@@ -11,7 +11,7 @@ timeline starts at the same timecode used here (Resolve's default is
 
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import cv2
 
@@ -73,6 +73,45 @@ def marker_name(highlight: Highlight, index: int) -> str:
     return sanitize_marker_name(text)
 
 
+def build_marker_edl(
+    events: List[Tuple[float, float, str, str]],
+    fps: float = DEFAULT_FPS,
+    title: str = "Markers",
+    record_start: str = DEFAULT_RECORD_START,
+    reel: str = "AX",
+) -> str:
+    """Render `(start, end, name, colour)` events as CMX3600 EDL marker text.
+
+    Shared by the highlight and chapter exports; both differ only in how they
+    derive those four values.
+    """
+    base = timebase(fps)
+    offset = timecode_to_frames(record_start, base)
+
+    lines = [f"TITLE: {sanitize_marker_name(title)}", "FCM: NON-DROP FRAME", ""]
+
+    # EDL events must run ascending by record timecode; LLM output does not.
+    event = 0
+    for index, (start, end, name, color) in enumerate(sorted(events, key=lambda e: e[0])):
+        start_frame = int(round(start * fps))
+        duration = max(1, int(round(end * fps)) - start_frame)
+
+        event += 1
+        record_in = frames_to_timecode(offset + start_frame, base)
+        record_out = frames_to_timecode(offset + start_frame + duration, base)
+        source_in = frames_to_timecode(start_frame, base)
+        source_out = frames_to_timecode(start_frame + duration, base)
+
+        lines.append(
+            f"{event:03d}  {reel:<8}V     C        "
+            f"{source_in} {source_out} {record_in} {record_out}"
+        )
+        lines.append(f" |C:{color} |M:{sanitize_marker_name(name)} |D:{duration}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def build_edl(
     highlights: List[Highlight],
     fps: float = DEFAULT_FPS,
@@ -81,37 +120,15 @@ def build_edl(
     reel: str = "AX",
 ) -> str:
     """Render highlights as CMX3600 EDL text with Resolve marker comments."""
-    base = timebase(fps)
-    offset = timecode_to_frames(record_start, base)
-
-    lines = [f"TITLE: {sanitize_marker_name(title)}", "FCM: NON-DROP FRAME", ""]
-
-    # EDL events must run ascending by record timecode; highlights come in LLM order.
-    event = 0
-    for index, highlight in enumerate(sorted(highlights, key=lambda h: h.start)):
+    events = []
+    for index, highlight in enumerate(highlights):
         if highlight.end <= highlight.start:
             logger.warning(f"Skipping highlight {index} with empty range")
             continue
-
-        event += 1
-        start_frame = int(round(highlight.start * fps))
-        duration = max(1, int(round(highlight.end * fps)) - start_frame)
-
-        record_in = frames_to_timecode(offset + start_frame, base)
-        record_out = frames_to_timecode(offset + start_frame + duration, base)
-        source_in = frames_to_timecode(start_frame, base)
-        source_out = frames_to_timecode(start_frame + duration, base)
-
         color = CLIP_GENERATED_MARKER_COLOR if highlight.is_clip_generated else MARKER_COLOR
+        events.append((highlight.start, highlight.end, marker_name(highlight, index), color))
 
-        lines.append(
-            f"{event:03d}  {reel:<8}V     C        "
-            f"{source_in} {source_out} {record_in} {record_out}"
-        )
-        lines.append(f" |C:{color} |M:{marker_name(highlight, index)} |D:{duration}")
-        lines.append("")
-
-    return "\n".join(lines)
+    return build_marker_edl(events, fps=fps, title=title, record_start=record_start, reel=reel)
 
 
 def build_project_edl(project, record_start: str = DEFAULT_RECORD_START, fps: Optional[float] = None) -> str:

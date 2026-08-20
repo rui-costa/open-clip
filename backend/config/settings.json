@@ -3,5 +3,11 @@
   "pipeline_defaults": {},
   "model": "base",
   "log_level": "DEBUG",
-  "codec": "h264_videotoolbox"
+  "codec": "h264_videotoolbox",
+  "caption_defaults": {
+    "enabled": true
+  },
+  "description_defaults": {
+    "text": "==================================== \n\u2615\ufe0f Join our Discord Community \n==================================== \nWe post our content also in discord, never miss an episode. We also sometimes go live there. Join us there: https://coffeenbytes.com/discord \n==================================== \n\ud83c\udf99\ufe0f Want to be a guest ? \n====================================\n \ud83d\udc49 We do all our recording online. Apply here: https://coffeenbytes.com/guest \n\n==================================== \n\ud83c\udf99\ufe0f All our Podcast Links: \n==================================== \n\nhttps://coffeenbytes.com/\nhttps://x.com/coffee_n_bytes\nhttps://www.linkedin.com/company/coffeenbytes\nhttps://creators.spotify.com/pod/profile/coffeenbytes/\n\n====================================\nHost: https://www.linkedin.com/in/costaruitiago/\n===================================="
+  }
 }

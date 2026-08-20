@@ -40,6 +40,12 @@ class SettingsManager:
                     "resolution": "keep original",
                     "aspect_ratio": "keep original",
                 },
+                # Empty means "use the template and text the app ships with";
+                # see backend/src/services/description_builder.py.
+                "description_defaults": {
+                    "text": "",
+                    "template": "",
+                },
             }
             self._save_settings(defaults)
             return defaults

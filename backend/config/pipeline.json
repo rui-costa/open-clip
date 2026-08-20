@@ -29,7 +29,7 @@
     "upload": {
       "command": "upload",
       "depends_on": [
-        "clipper"
+        "highlights"
       ],
       "auto_run": false
     }
