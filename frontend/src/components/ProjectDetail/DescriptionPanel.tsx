@@ -1,0 +1,178 @@
+import React, { useEffect, useId, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Modal } from '../Modal';
+import { DescriptionFieldHelp } from '../DescriptionFieldHelp';
+import { updateProjectSettings, type DescriptionSettings } from '../../api';
+
+interface DescriptionPanelProps {
+  projectId: string;
+  /** What the project has stored, or undefined for a project created before this existed. */
+  settings: DescriptionSettings | undefined;
+  /** See CaptionStyler: `panel` is a row with a summary, `inline` is one text action. */
+  variant?: 'panel' | 'inline';
+}
+
+const EMPTY: DescriptionSettings = { source_url: '', source_title: '', text: '', template: '' };
+
+/**
+ * The project's half of the YouTube description, behind a button.
+ *
+ * The original video is a project fact — every short cut from it points back at
+ * the same episode — and the link is what YouTube uses to connect a short to the
+ * video it came from, so it is asked for here rather than left to the model.
+ *
+ * Fields are written when the user leaves them rather than on every keystroke:
+ * these are sentences and URLs typed once, not sliders dragged.
+ */
+export const DescriptionPanel: React.FC<DescriptionPanelProps> = ({ projectId, settings, variant = 'panel' }) => {
+  const queryClient = useQueryClient();
+  const [isOpen, setIsOpen] = useState(false);
+  const [draft, setDraft] = useState<DescriptionSettings>(settings ?? EMPTY);
+  const urlId = useId();
+  const titleId = useId();
+  const textId = useId();
+  const templateId = useId();
+
+  // A background metadata refresh must not overwrite what the user is typing,
+  // so the draft only re-syncs while the dialog is closed.
+  useEffect(() => {
+    if (!isOpen) setDraft(settings ?? EMPTY);
+  }, [settings, isOpen]);
+
+  const mutation = useMutation({
+    mutationFn: (next: Partial<DescriptionSettings>) =>
+      updateProjectSettings(projectId, { description: next }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['projectMetadata', projectId] });
+      // Every clip's description is built from these, so the previews are stale.
+      queryClient.invalidateQueries({ queryKey: ['clipDescription', projectId] });
+    },
+  });
+
+  const stored = settings ?? EMPTY;
+
+  const commit = (field: keyof DescriptionSettings) => {
+    if (draft[field] === stored[field]) return;
+    mutation.mutate({ [field]: draft[field] });
+  };
+
+  const fieldStyle: React.CSSProperties = {
+    padding: 'var(--space-sm)',
+    background: 'var(--bg)',
+    color: 'var(--text)',
+    border: 'var(--border)',
+    fontFamily: 'inherit',
+    fontSize: '0.85rem',
+    width: '100%',
+  };
+
+  const labelStyle: React.CSSProperties = {
+    fontWeight: 900,
+    fontSize: '0.65rem',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
+  };
+
+  const field = (
+    id: string,
+    label: string,
+    name: keyof DescriptionSettings,
+    hint: string,
+    multiline = false
+  ) => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+      <label htmlFor={id} style={labelStyle}>{label}</label>
+      {multiline ? (
+        <textarea
+          id={id}
+          value={draft[name]}
+          onChange={(e) => setDraft({ ...draft, [name]: e.target.value })}
+          onBlur={() => commit(name)}
+          style={{ ...fieldStyle, minHeight: '110px', fontFamily: 'monospace', lineHeight: 1.4 }}
+        />
+      ) : (
+        <input
+          id={id}
+          type="text"
+          spellCheck={false}
+          value={draft[name]}
+          onChange={(e) => setDraft({ ...draft, [name]: e.target.value })}
+          onBlur={() => commit(name)}
+          style={fieldStyle}
+        />
+      )}
+      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: 1.3 }}>{hint}</span>
+    </div>
+  );
+
+  const badge = (
+    <span
+      className="status-badge"
+      style={stored.source_url ? { background: 'var(--success)', color: 'var(--on-success)' } : undefined}
+    >
+      {stored.source_url ? 'Linked' : 'No source'}
+    </span>
+  );
+
+  return (
+    <>
+      {variant === 'inline' ? (
+        <button type="button" className="text-action" onClick={() => setIsOpen(true)}>
+          Description
+          {badge}
+        </button>
+      ) : (
+        <>
+          <button type="button" className="panel-button" onClick={() => setIsOpen(true)}>
+            <span>Description</span>
+            {badge}
+          </button>
+          <p style={{ margin: 'var(--space-sm) 0 0 0', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+            {stored.source_url
+              ? `Shorts link back to ${stored.source_title || 'the original video'}`
+              : 'Add the original video so every short can point back to it'}
+          </p>
+        </>
+      )}
+
+      <Modal isOpen={isOpen} title="YouTube description" onClose={() => setIsOpen(false)} maxWidth="620px">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+          {field(
+            urlId,
+            'Original video URL',
+            'source_url',
+            'The full episode this project was cut from. It goes in every description as a link back. YouTube\'s own "Related video" chip is separate and can only be set per short in Studio.'
+          )}
+          {field(
+            titleId,
+            'Original video title',
+            'source_title',
+            'How the episode is named in the description, e.g. "The Podcast — Episode 12".'
+          )}
+          {field(
+            textId,
+            'Project text',
+            'text',
+            'Text added to every description in this project. Use {project.text} in the template to place it.',
+            true
+          )}
+          {field(
+            templateId,
+            'Template for this project',
+            'template',
+            'Leave empty to use the template from Settings. Anything you type here is used exactly as written, except fields in braces.',
+            true
+          )}
+          <DescriptionFieldHelp />
+        </div>
+
+        {mutation.isError && (
+          <p role="alert" style={{ margin: 'var(--space-md) 0 0 0', fontSize: '0.75rem', color: 'var(--error)' }}>
+            Could not save that. Uploads would use the last saved description, not this one.
+          </p>
+        )}
+      </Modal>
+    </>
+  );
+};

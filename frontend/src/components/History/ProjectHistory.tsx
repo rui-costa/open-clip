@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ProjectMetadata } from '../../api';
 import { deleteProject } from '../../api';
@@ -11,7 +11,6 @@ interface ProjectHistoryProps {
 }
 
 export const ProjectHistory: React.FC<ProjectHistoryProps> = ({ projects }) => {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean; projectId: string; projectName: string }>({
     isOpen: false,
@@ -39,30 +38,15 @@ export const ProjectHistory: React.FC<ProjectHistoryProps> = ({ projects }) => {
   return (
     <div className="project-history" style={{ margin: '0 auto', width: '100%' }}>
       <header style={{ marginBottom: 'var(--space-xl)', textAlign: 'center' }}>
-        <h2>All Projects</h2>
-        <p style={{ 
-          color: 'var(--text)', 
-          fontWeight: 'bold', 
-          textTransform: 'uppercase', 
-          fontSize: '1rem',
-          marginBottom: 'var(--space-md)' 
-        }}>
-          Manage and revisit your projects.
-        </p>
+        <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3rem)' }}>All Projects</h1>
       </header>
 
-      <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: 'repeat(auto-fill, 300px)', 
-        gap: 'var(--space-md)',
-        justifyContent: 'center'
-      }}>
+      <div className="card-grid">
         {projects.length > 0 ? (
           projects.map((project, index) => (
-            <div 
-              key={project.project_id} 
-              onClick={() => navigate(`/project/${project.project_id}`)}
-              style={{ 
+            <div
+              key={project.project_id}
+              style={{
                 position: 'relative',
                 padding: 'var(--space-md)', 
                 border: 'var(--border)', 
@@ -93,16 +77,24 @@ export const ProjectHistory: React.FC<ProjectHistoryProps> = ({ projects }) => {
               }}
             >
               <div>
-                <span style={{ 
-                  fontSize: '1.5rem', 
-                  fontWeight: '900', 
-                  textTransform: 'uppercase', 
-                  lineHeight: '1.1',
-                  display: 'block',
-                  marginBottom: 'var(--space-sm)'
-                }}>
+                <Link
+                  to={`/project/${project.project_id}`}
+                  style={{
+                    fontSize: '1.5rem',
+                    fontWeight: '900',
+                    textTransform: 'uppercase',
+                    lineHeight: '1.1',
+                    display: 'block',
+                    marginBottom: 'var(--space-sm)',
+                    color: 'inherit',
+                    textDecoration: 'none'
+                  }}
+                >
                   {project.name}
-                </span>
+                  {/* Stretches the link over the whole card so the card stays
+                      clickable without nesting the Delete button inside it. */}
+                  <span style={{ position: 'absolute', inset: 0, zIndex: 1 }} />
+                </Link>
                 <div style={{ 
                   display: 'flex', 
                   flexDirection: 'column', 
@@ -146,9 +138,11 @@ export const ProjectHistory: React.FC<ProjectHistoryProps> = ({ projects }) => {
                       projectName: project.name 
                     });
                   }}
-                  style={{ 
+                  style={{
                     fontSize: '0.7rem',
                     padding: '0.25rem 0.5rem',
+                    position: 'relative',
+                    zIndex: 2,
                   }}
                 >
                   DELETE
@@ -157,16 +151,31 @@ export const ProjectHistory: React.FC<ProjectHistoryProps> = ({ projects }) => {
             </div>
           ))
         ) : (
-          <div style={{ 
-            gridColumn: '1 / -1', 
-            padding: 'var(--space-xl)', 
-            textAlign: 'center', 
-            border: 'var(--border)',
-            fontWeight: '900', 
-            textTransform: 'uppercase',
-            fontSize: '2rem'
+          <div style={{
+            gridColumn: '1 / -1',
+            padding: 'var(--space-xl)',
+            textAlign: 'center',
+            border: '4px dashed var(--text)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 'var(--space-md)'
           }}>
-            No projects found.
+            <h2 style={{ margin: 0, fontSize: '2rem', fontWeight: 900, textTransform: 'uppercase' }}>
+              No projects yet
+            </h2>
+            {/* The only place a project can be created is the home route, and
+                nothing here previously pointed at it. */}
+            <p style={{ margin: 0, maxWidth: '420px', lineHeight: 1.4 }}>
+              Upload a video and Open-Clip will transcribe it, find the highlights, and cut them into clips.
+            </p>
+            <Link
+              to="/"
+              className="btn-primary btn-md"
+              style={{ textDecoration: 'none', display: 'inline-block' }}
+            >
+              Upload a video
+            </Link>
           </div>
         )}
       </div>

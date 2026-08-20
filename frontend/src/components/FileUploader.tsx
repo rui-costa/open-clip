@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { PongGame } from './PongGame';
 
 import { getSpinnerVerb } from '../utils/spinnerVerbs';
+import { getSettings, getResolutions, getAspectRatios, type SettingsResponse } from '../api';
 
 // ... (remove UPLOAD_VERBS and PROCESSING_VERBS arrays)
 
@@ -24,20 +25,17 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
   const [availableAspectRatios, setAvailableAspectRatios] = useState<string[]>(['keep original']);
 
   useEffect(() => {
-    Promise.all([
-      fetch('http://localhost:8000/settings').then(res => res.json()),
-      fetch('http://localhost:8000/resolutions').then(res => res.json()),
-      fetch('http://localhost:8000/aspect_ratios').then(res => res.json())
-    ])
-    .then(([settingsData, resolutionsData, aspectRatiosData]) => {
-      if (settingsData.settings?.video_defaults) {
-        setResolution(settingsData.settings.video_defaults.resolution);
-        setAspectRatio(settingsData.settings.video_defaults.aspect_ratio);
-      }
-      setAvailableResolutions(['keep original', ...Object.keys(resolutionsData)]);
-      setAvailableAspectRatios(['keep original', ...Object.keys(aspectRatiosData)]);
-    })
-    .catch(err => console.error('Failed to fetch config, using defaults', err));
+    Promise.all([getSettings(), getResolutions(), getAspectRatios()])
+      .then(([settingsData, resolutions, aspectRatios]) => {
+        const defaults = (settingsData as SettingsResponse).settings?.video_defaults;
+        if (defaults) {
+          setResolution(defaults.resolution);
+          setAspectRatio(defaults.aspect_ratio);
+        }
+        setAvailableResolutions(['keep original', ...resolutions]);
+        setAvailableAspectRatios(['keep original', ...aspectRatios]);
+      })
+      .catch(err => console.error('Failed to fetch config, using defaults', err));
   }, []);
 
   useEffect(() => {
@@ -49,10 +47,13 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
 
   useEffect(() => {
     if (!isPending) setShowGame(false);
+    // Deliberately avoids Space/Enter: those activate whatever control the user
+    // currently has focused, so binding them here would swallow every button
+    // press on the page for the duration of the upload.
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isPending && [' ', 'Enter'].includes(e.key)) {
-        setShowGame(true);
-      }
+      if (!isPending) return;
+      if (e.key === 'p' || e.key === 'P') setShowGame(true);
+      if (e.key === 'Escape') setShowGame(false);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -76,12 +77,16 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
     }
   };
 
+  // Only the empty dropzone is itself a control. Once a file is chosen the
+  // panel contains its own buttons and selects, so it must not also be one.
+  const isInteractive = !isPending && !file;
+
   return (
-    <div 
-      style={{ 
-        display: 'flex', 
-        flexDirection: 'column', 
-        alignItems: 'center', 
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
         justifyContent: 'center', 
         padding: 'var(--space-xl)', 
         border: dragActive ? '4px dashed var(--accent)' : '4px dashed var(--text)', 
@@ -96,7 +101,18 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
       onDragLeave={(e) => { e.preventDefault(); setDragActive(false); }}
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
-      onClick={() => !isPending && !file && fileInputRef.current?.click()}
+      onClick={() => isInteractive && fileInputRef.current?.click()}
+      {...(isInteractive ? {
+        role: 'button',
+        tabIndex: 0,
+        'aria-label': 'Choose a video file to upload, or drop one here',
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            fileInputRef.current?.click();
+          }
+        },
+      } : {})}
     >
       <input 
         ref={fileInputRef} 
@@ -125,19 +141,26 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
             <div className="spinner" style={{ 
                 width: '60px', 
                 height: '60px', 
-                border: '6px solid var(--border)', 
-                borderTop: '6px solid var(--accent)', 
+                border: '6px solid var(--border-color)',
+                borderTop: '6px solid var(--accent)',
                 borderRadius: '50%',
                 animation: 'spin 1s linear infinite' 
             }} />
-            <h2 style={{ fontSize: '2rem', textTransform: 'uppercase', margin: '10px 0', color: 'var(--text)' }}>
+            <h1 style={{ fontSize: '2rem', textTransform: 'uppercase', margin: '10px 0', color: 'var(--text)' }}>
                 {spinnerVerb}
-            </h2>
+            </h1>
             <p style={{ fontSize: '1.2rem', marginBottom: 'var(--space-sm)', color: 'var(--text)' }}>
                 {uploadProgress < 99 ? `${uploadProgress}% Complete` : 'Almost finished...'}
             </p>
             {uploadProgress < 99 && (
-                <div style={{ width: '300px', height: '20px', background: 'var(--border)', borderRadius: '10px', overflow: 'hidden' }}>
+                <div
+                  role="progressbar"
+                  aria-valuenow={uploadProgress}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Upload progress"
+                  style={{ width: '100%', maxWidth: '300px', height: '20px', background: 'var(--bg-secondary)', border: 'var(--border)', overflow: 'hidden' }}
+                >
                 <div style={{ width: `${uploadProgress}%`, height: '100%', background: 'var(--accent)', transition: 'width 200ms ease-out' }} />
                 </div>
             )}
@@ -146,7 +169,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
             </p>
             {!showGame && (
                 <p style={{ fontSize: '0.9rem', color: 'var(--accent)', fontStyle: 'italic', marginTop: '10px' }}>
-                Press Space to start Background Pong
+                Press P to start Background Pong
                 </p>
             )}
           </div>
@@ -154,9 +177,9 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
         </div>
       ) : !file ? (
         <>
-          <h2 style={{ fontSize: '3rem', fontWeight: 900, margin: '0 0 var(--space-sm) 0', textTransform: 'uppercase' }}>
+          <h1 style={{ fontSize: '3rem', fontWeight: 900, margin: '0 0 var(--space-sm) 0', textTransform: 'uppercase' }}>
             Upload Video
-          </h2>
+          </h1>
           <p style={{ fontSize: '1.2rem', maxWidth: '600px', marginBottom: 'var(--space-lg)', lineHeight: '1.4', fontWeight: 500 }}>
             Drag and drop your video file here, or click to browse your computer. 
             We'll handle the transcription and clipping automatically.
@@ -166,7 +189,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
             border: 'var(--border)', 
             fontWeight: 900, 
             fontSize: '1.2rem',
-            animation: 'bounce 2s infinite'
+            animation: 'nudge 2.4s var(--ease-out-quart) infinite'
           }}>
             DROP VIDEO HERE
           </div>
@@ -177,7 +200,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
           flexDirection: 'column', 
           alignItems: 'center', 
           gap: 'var(--space-md)',
-          animation: 'slideUp 400ms var(--ease-out-quart) forwards' 
+          animation: 'slide-up 400ms var(--ease-out-quart) forwards'
         }}>
           <div style={{ 
             backgroundColor: 'var(--accent)', 
@@ -216,30 +239,26 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
             >
               CREATE PROJECT
             </button>
-            <button 
-              onClick={(e) => { e.stopPropagation(); setFile(null); }} 
-              style={{ 
-                fontSize: '0.9rem', 
-                opacity: 1 
-              }}
-            >
-              REMOVE FILE
-            </button>
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap', justifyContent: 'center' }}>
+              {/* Dropping a second file already replaced the selection, but
+                  clicking did nothing once one was chosen. This makes the
+                  pointer path match the drag path. */}
+              <button
+                onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                style={{ fontSize: '0.9rem', minHeight: '44px' }}
+              >
+                CHOOSE DIFFERENT FILE
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setFile(null); }}
+                style={{ fontSize: '0.9rem', minHeight: '44px' }}
+              >
+                REMOVE FILE
+              </button>
+            </div>
           </div>
         </div>
       )}
-      <style>{`
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        @keyframes bounce {
-          0%, 20%, 50%, 80%, 100% {transform: translateY(0);}
-          40% {transform: translateY(-10px);}
-          60% {transform: translateY(-5px);}
-        }
-        @keyframes slideUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
     </div>
   );
 };

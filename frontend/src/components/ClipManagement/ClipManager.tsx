@@ -1,9 +1,20 @@
 import React, { useState } from 'react';
 import { Clip } from './Clip';
 import { ClipSkeleton } from './ClipSkeleton';
+import type { ClipPreview } from '../../api';
 
 interface ClipRaw {
-  filename: string;
+  /** Position in the project's highlights, assigned where the list is built. */
+  index: number;
+  filename: string | null;
+  isRendered: boolean;
+  captionsBurned?: boolean;
+  overlayBurned?: boolean;
+  /** Where this clip already lives on YouTube, once it has been published. */
+  youtubeUrl?: string | null;
+  youtubeVideoId?: string | null;
+  /** When it was last published, which is how a finished upload is judged. */
+  uploadedAt?: string | null;
   original_start: number;
   original_end: number;
   text: string;
@@ -12,64 +23,87 @@ interface ClipRaw {
 interface ClipManagerProps {
   projectId: string;
   clips: ClipRaw[];
+  /** The uncut source, previewed inside each highlight's window. */
+  sourceUrl: string | null;
+  /** Target width / height the clipper would render at, or null for source. */
+  aspectRatio: number | null;
+  /** What every still card shows: its thumbnail, or the video frame under it. */
+  clipPreview?: ClipPreview;
   onDeleteClip: (index: number) => void;
   isLoading?: boolean;
-  onSyncSource: (startTime: number) => void;
-  onPauseSource: () => void;
 }
 
-export const ClipManager: React.FC<ClipManagerProps> = ({ projectId, clips, onDeleteClip, isLoading, onSyncSource, onPauseSource }) => {
+export const ClipManager: React.FC<ClipManagerProps> = ({ projectId, clips, sourceUrl, aspectRatio, clipPreview, onDeleteClip, isLoading }) => {
   const [playingClipIndex, setPlayingClipIndex] = useState<number | null>(null);
 
   if (clips.length === 0 && !isLoading) {
     return (
-      <div style={{ 
-        display: 'flex', 
-        flexDirection: 'column', 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        padding: 'var(--space-xl)', 
-        border: '4px dashed var(--text)', 
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 'var(--space-xl)',
+        border: 'var(--border-width) dashed var(--border-color)',
         textAlign: 'center',
-        backgroundColor: 'var(--bg)' 
+        backgroundColor: 'var(--bg)'
       }}>
-        <h3 style={{ fontSize: '2rem', fontWeight: 900, margin: '0 0 var(--space-sm) 0', textTransform: 'uppercase' }}>
-          No Clips Generated
-        </h3>
+        <h2 style={{ fontSize: '2rem', fontWeight: 900, margin: '0 0 var(--space-sm) 0', textTransform: 'uppercase' }}>
+          No Clips Yet
+        </h2>
         <p style={{ fontSize: '1.1rem', maxWidth: '500px', marginBottom: 'var(--space-lg)', lineHeight: '1.4' }}>
-          Your extracted clips will appear here once the <strong>Clipper</strong> step of the pipeline is executed.
+          Every clip appears here as a preview once the <strong>Highlights</strong> step has run — playable
+          straight from the source, before anything is cut.
         </p>
-        <div style={{ 
-          padding: 'var(--space-sm) var(--space-md)', 
-          border: 'var(--border)', 
-          fontWeight: 900, 
+        <div style={{
+          padding: 'var(--space-sm) var(--space-md)',
+          border: 'var(--border)',
+          fontWeight: 900,
           fontSize: '1.2rem',
-          animation: 'bounce 2s infinite'
+          // Three nudges, then still. Looping forever is motion that starts
+          // automatically and never stops, which WCAG 2.2.2 asks for a pause
+          // control for — and unlike the running-step sheen this conveys no
+          // ongoing activity, so it earns no exemption. Three is enough to
+          // point at the pipeline without becoming furniture that twitches.
+          animation: 'nudge 2.4s var(--ease-out-quart) 3'
         }}>
           ↑ RUN PIPELINE ABOVE
         </div>
-        <style>{`
-          @keyframes bounce {
-            0%, 20%, 50%, 80%, 100% {transform: translateY(0);}
-            40% {transform: translateY(-10px);}
-            60% {transform: translateY(-5px);}
-          }
-        `}</style>
       </div>
     );
   }
 
   return (
-    <div className="clip-manager">
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 'var(--space-md)' }}>
-        {clips.map((clip, index) => (
-          <Clip 
-            key={index} 
+    <div
+      className="clip-manager"
+      // The one place the target ratio reaches CSS. The grid track and the
+      // per-card media cap both derive from it, so a portrait project gets
+      // narrow tracks and a landscape one wide ones, and neither has to guess.
+      // Left unset until the settings resolve, where the stylesheet's default
+      // stands in.
+      style={aspectRatio ? ({ ['--clip-ratio' as string]: String(aspectRatio) } as React.CSSProperties) : undefined}
+    >
+      {/* .card-grid rather than an inline copy of it: the class guards the
+          track minimum with min(300px, 100%), which is what keeps the grid
+          from overflowing viewports narrower than one card. */}
+      <div className="card-grid">
+        {clips.map((clip) => (
+          <Clip
+            // Keyed by the window it plays, not position: deleting a highlight
+            // shifts every later index down, and an index key would hand clip
+            // N+1 the mounted <video> (and its playback state) of the deleted one.
+            key={`${clip.original_start}-${clip.original_end}-${clip.filename ?? 'preview'}`}
             projectId={projectId}
-            clip={{ ...clip, index }} 
-            onDelete={onDeleteClip} 
-            onSyncSource={onSyncSource}
-            onPauseSource={onPauseSource}
+            // Passed straight through. Spreading a fresh object in here made a
+            // new prop identity on every render and undid the memo on Clip.
+            clip={clip}
+            // Capped: past the first handful the stagger stops reading as
+            // choreography and starts reading as the page being slow.
+            enterDelayMs={Math.min(clip.index, 7) * 60}
+            sourceUrl={sourceUrl}
+            aspectRatio={aspectRatio}
+            clipPreview={clipPreview}
+            onDelete={onDeleteClip}
             playingClipIndex={playingClipIndex}
             setPlayingClipIndex={setPlayingClipIndex}
           />

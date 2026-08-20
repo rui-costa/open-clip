@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect, useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ConfirmationModalProps {
   isOpen: boolean;
@@ -19,40 +20,103 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   confirmText = 'CONFIRM',
   cancelText = 'CANCEL',
 }) => {
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    // Cancel is focused rather than Confirm: this dialog only ever guards a
+    // destructive action, so the safe option should be the one a stray Enter
+    // lands on.
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    cancelRef.current?.focus();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onCancel();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+
+      // Disabled and hidden nodes match the selector but cannot take focus, so
+      // trapping onto one silently breaks the cycle and lets Tab escape the
+      // dialog. `offsetParent` is null for anything display:none.
+      const focusable = Array.from(
+        panelRef.current?.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        ) ?? []
+      ).filter((node) => !node.hasAttribute('disabled') && node.offsetParent !== null);
+      if (!focusable.length) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [isOpen, onCancel]);
+
   if (!isOpen) return null;
 
-  return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      width: '100vw',
-      height: '100vh',
-      backgroundColor: 'rgba(0,0,0,0.8)',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      zIndex: 1000,
-      backdropFilter: 'blur(4px)',
-      animation: 'fadeIn 200ms var(--ease-out-quart)'
-    }}>
-      <div style={{
-        backgroundColor: 'var(--bg)',
-        color: 'var(--text)',
-        border: 'var(--border)',
-        padding: 'var(--space-xl)',
-        maxWidth: '500px',
-        width: '90%',
-        boxShadow: '8px 8px 0px var(--accent)',
-        animation: 'entrance 300ms var(--ease-out-quart)'
-      }}>
-        <h2 style={{ 
-          fontSize: '2rem', 
-          fontWeight: '900', 
-          textTransform: 'uppercase', 
-          marginBottom: 'var(--space-md)',
-          lineHeight: '1'
-        }}>
+  // Portalled for the same reason as Modal: this one is rendered from inside a
+  // clip card, which is `position: relative`, so a confirmation opened on one
+  // card would paint underneath the cards that follow it.
+  return createPortal(
+    <div
+      onClick={onCancel}
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100vw',
+        height: '100vh',
+        backgroundColor: 'rgba(0,0,0,0.8)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 1000,
+      }}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          backgroundColor: 'var(--bg)',
+          color: 'var(--text)',
+          border: 'var(--border)',
+          padding: 'var(--space-xl)',
+          maxWidth: '500px',
+          width: '90%',
+          boxShadow: '8px 8px 0px var(--accent)',
+          animation: 'entrance 300ms var(--ease-out-quart)'
+        }}
+      >
+        <h2
+          id={titleId}
+          style={{
+            fontSize: '2rem',
+            fontWeight: '900',
+            textTransform: 'uppercase',
+            marginBottom: 'var(--space-md)',
+            lineHeight: '1'
+          }}
+        >
           {title}
         </h2>
         <p style={{ 
@@ -68,57 +132,29 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
           justifyContent: 'flex-end', 
           gap: 'var(--space-md)' 
         }}>
-          <button 
+          {/* The design system's own button classes rather than inline hover
+              handlers. Those set styles imperatively on mouseenter and undid
+              them on mouseleave — an event a touch browser frequently never
+              sends, which left the button stuck in its hover state. The
+              classes carry the same treatment behind a (hover: hover) guard. */}
+          <button
+            ref={cancelRef}
             onClick={onCancel}
-            style={{
-              background: 'transparent',
-              border: '4px solid var(--text)',
-              color: 'var(--text)',
-              fontWeight: 900,
-              fontSize: '0.9rem',
-              padding: '0.5rem 1.5rem',
-              cursor: 'pointer',
-              textTransform: 'uppercase',
-              transition: 'all 200ms var(--ease-out-quart)'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--text)';
-              e.currentTarget.style.color = 'var(--bg)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.color = 'var(--text)';
-            }}
+            className="btn-ghost btn-md"
+            style={{ fontSize: '0.9rem', minHeight: '44px' }}
           >
             {cancelText}
           </button>
-          <button 
+          <button
             onClick={onConfirm}
-            style={{
-              background: 'var(--error)',
-              border: '4px solid var(--error)',
-              color: 'var(--bg)',
-              fontWeight: 900,
-              fontSize: '0.9rem',
-              padding: '0.5rem 1.5rem',
-              cursor: 'pointer',
-              textTransform: 'uppercase',
-              transition: 'all 200ms var(--ease-out-quart)'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.color = 'var(--error)';
-              e.currentTarget.style.borderColor = 'var(--error)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--error)';
-              e.currentTarget.style.color = 'var(--bg)';
-            }}
+            className="btn-danger btn-md"
+            style={{ fontSize: '0.9rem', minHeight: '44px' }}
           >
             {confirmText}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
