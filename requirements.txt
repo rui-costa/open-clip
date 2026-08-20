@@ -4,6 +4,4 @@ torch
 torchvision
 ultralytics
 opencv-python
-moviepy
 google-api-python-client
-google-auth-oauthlib
