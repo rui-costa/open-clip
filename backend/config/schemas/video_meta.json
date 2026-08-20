@@ -1,29 +1,36 @@
 {
   "type": "object",
   "properties": {
-    "components": {
+    "summary": {"type": "string"},
+    "titles": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
           "title": {"type": "string"},
-          "summary": {"type": "string"},
           "post_for_x": {"type": "string"},
           "post_for_reddit": {"type": "string"},
-          "post_for_linkedin": {"type": "string"},
-          "reason": {"type": "string"}
-        }
+          "post_for_linkedin": {"type": "string"}
+        },
+        "required": [
+          "title",
+          "post_for_x",
+          "post_for_reddit",
+          "post_for_linkedin"
+        ]
       }
     },
-    "top_recommendations": {
+    "top_2": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
           "index": {"type": "integer"},
           "reason": {"type": "string"}
-        }
+        },
+        "required": ["index", "reason"]
       }
     }
-  }
+  },
+  "required": ["summary", "titles"]
 }

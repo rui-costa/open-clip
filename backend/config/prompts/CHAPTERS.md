@@ -20,3 +20,13 @@ I am providing a podcast transcript in attach and a word map with timestamps. Yo
 
 ## WORD MAP:  
 {word_map}
+
+## OUTPUT: RETURN ONLY VALID JSON. Order by start time.
+{{
+  "chapters": [
+    {{
+      "chapter_time": "<Timestamp in HH:MM:SS>",
+      "chapter_title": "<Chapter title>"
+    }}
+  ]
+}}

@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "chapters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "chapter_time": {"type": "string"},
+          "chapter_title": {"type": "string"}
+        },
+        "required": ["chapter_time", "chapter_title"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["chapters"]
+}

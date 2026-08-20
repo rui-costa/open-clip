@@ -1,12 +1,14 @@
 {
-  "extract_highlights": {
+  "highlights": {
     "template": "backend/config/prompts/HIGHLIGHTS.md",
+    "schema": "backend/config/schemas/highlights.json",
     "is_json": true,
-    "schema": "backend/config/schemas/highlights.json"
+    "result_adapter": "highlights"
   },
-  "generate_metadata": {
+  "metadata": {
     "template": "backend/config/prompts/VIDEO_META.md",
+    "schema": "backend/config/schemas/video_meta.json",
     "is_json": true,
-    "schema": "backend/config/schemas/video_meta.json"
+    "result_adapter": "video_metadata"
   }
 }

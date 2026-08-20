@@ -24,7 +24,7 @@
       "depends_on": [
         "highlights"
       ],
-      "auto_run": true
+      "auto_run": false
     },
     "upload": {
       "command": "upload",
