@@ -1,25 +1,102 @@
 import cv2
 import subprocess
-import shutil
 import json
 import logging
-from typing import Tuple, Optional, Any
+from functools import lru_cache
+from typing import Tuple, Optional, List
 from abc import ABC, abstractmethod
 from pathlib import Path
 from backend.src.settings_manager import settings_manager
 
 logger = logging.getLogger(__name__)
 
-# Utility for viewport math
-def calculate_crop_params(src_w, src_h, target_w, target_h, subject_x=0.5, subject_y=0.5):
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
+
+
+@lru_cache(maxsize=None)
+def _load_config(name: str) -> dict:
+    """Loads and caches a JSON config file from backend/config."""
+    with open(CONFIG_DIR / name, "r") as f:
+        return json.load(f)
+
+
+@lru_cache(maxsize=8)
+def _probe_video_cached(input_path: str, mtime: float, size: int) -> Tuple[int, int, float]:
+    """Reads width/height/fps from a video file. Keyed on mtime+size so the
+    cache invalidates if the file is replaced."""
+    cap = cv2.VideoCapture(input_path)
+    try:
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
+    finally:
+        cap.release()
+    return width, height, fps
+
+
+def probe_video(input_path: str) -> Tuple[int, int, float]:
+    """Returns (width, height, fps) for a video, cached per file version."""
+    stat = Path(input_path).stat()
+    return _probe_video_cached(input_path, stat.st_mtime, stat.st_size)
+
+
+def _make_even(value: int) -> int:
+    return value - (value % 2)
+
+
+def calculate_crop_rect(
+    src_w: int, src_h: int, target_w: int, target_h: int,
+    subject_x: float = 0.5, subject_y: float = 0.5,
+) -> Tuple[int, int, int, int]:
+    """Returns the crop rectangle (w, h, x, y) *in source coordinates* that,
+    once scaled to target_w x target_h, frames the subject.
+
+    Cropping before scaling means the scaler only touches pixels that survive
+    into the output, instead of resizing the whole frame and discarding most
+    of it.
+    """
     scale = max(target_w / src_w, target_h / src_h)
-    scaled_w, scaled_h = src_w * scale, src_h * scale
-    
-    # Calculate crop coordinates
-    x1 = max(0, min(subject_x * scaled_w - (target_w / 2), scaled_w - target_w))
-    y1 = max(0, min(subject_y * scaled_h - (target_h / 2), scaled_h - target_h))
-    
-    return float(scale), int(x1), int(y1)
+
+    crop_w = _make_even(min(src_w, round(target_w / scale)))
+    crop_h = _make_even(min(src_h, round(target_h / scale)))
+
+    crop_x = _make_even(int(max(0, min(subject_x * src_w - crop_w / 2, src_w - crop_w))))
+    crop_y = _make_even(int(max(0, min(subject_y * src_h - crop_h / 2, src_h - crop_h))))
+
+    return crop_w, crop_h, crop_x, crop_y
+
+
+def build_encoder_args(codec: str, target_w: int, target_h: int, fps: float) -> List[str]:
+    """Returns codec-appropriate quality flags.
+
+    Software x264/x265 use CRF; hardware encoders (videotoolbox, nvenc, qsv,
+    vaapi) ignore CRF and fall back to a low default bitrate unless one is
+    given explicitly, so a target bitrate is derived from the output size.
+    """
+    if codec.startswith("libx264"):
+        return ["-preset", settings_manager.get("x264_preset") or "veryfast",
+                "-crf", str(settings_manager.get("crf") or 21)]
+    if codec.startswith("libx265"):
+        return ["-preset", settings_manager.get("x264_preset") or "veryfast",
+                "-crf", str(settings_manager.get("crf") or 26)]
+
+    configured = settings_manager.get("video_bitrate")
+    if configured:
+        bitrate_kbps = int(configured)
+    else:
+        # ~0.1 bits per pixel per second is a reasonable h264 quality target.
+        bitrate_kbps = max(2000, int(target_w * target_h * fps * 0.1 / 1000))
+    return ["-b:v", f"{bitrate_kbps}k"]
+
+
+def escape_filter_path(path: str) -> str:
+    """Escapes a path for use as a value inside an ffmpeg filter argument.
+
+    The filter graph parser eats backslashes, colons and quotes before the
+    filter ever sees them, so each has to survive two rounds of unescaping.
+    """
+    return path.replace('\\', '\\\\').replace(':', '\\:').replace("'", "\\'")
+
 
 class VideoEngine(ABC):
     @abstractmethod
@@ -27,7 +104,18 @@ class VideoEngine(ABC):
         pass
 
     @abstractmethod
-    def process_clip(self, input_path: str, output_path: str, start: float, end: float, aspect_ratio: str, resolution: str) -> None:
+    def process_clip(
+        self, input_path: str, output_path: str, start: float, end: float,
+        aspect_ratio: str, resolution: str, subtitle_path: Optional[str] = None,
+    ) -> None:
+        pass
+
+    @abstractmethod
+    def extract_frame(
+        self, input_path: str, output_path: str, timestamp: float,
+        aspect_ratio: str, resolution: str, subtitle_path: Optional[str] = None,
+        framing_timestamp: Optional[float] = None,
+    ) -> None:
         pass
 
 class OpenCVVideoEngine(VideoEngine):
@@ -36,12 +124,13 @@ class OpenCVVideoEngine(VideoEngine):
         self.model = YOLO(model_path)
 
     def get_subject_center(self, input_path: str, timestamp: float) -> Optional[Tuple[float, float]]:
+        _, _, fps = probe_video(input_path)
         cap = cv2.VideoCapture(input_path)
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        frame_idx = int(timestamp * fps)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = cap.read()
-        cap.release()
+        try:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(timestamp * fps))
+            ret, frame = cap.read()
+        finally:
+            cap.release()
         if not ret: return None
         h, w = frame.shape[:2]
         results = self.model(frame, classes=[0], verbose=False)
@@ -50,20 +139,16 @@ class OpenCVVideoEngine(VideoEngine):
             return (float(box[0]) / w, float(box[1]) / h)
         return None
 
-    def process_clip(self, input_path: str, output_path: str, start: float, end: float, aspect_ratio: str, resolution: str) -> None:
-        with open("backend/config/resolutions.json", "r") as f:
-            res_map = json.load(f)
-        with open("backend/config/aspect_ratios.json", "r") as f:
-            ar_map = json.load(f)
+    def _resolve_target_dimensions(self, src_w: int, src_h: int, aspect_ratio: str, resolution: str) -> Tuple[int, int]:
+        """Resolves the output dimensions from the configured aspect ratio and resolution."""
+        ar_map = _load_config("aspect_ratios.json")
+        ratio = ar_map.get(aspect_ratio, aspect_ratio)
+        if ":" in ratio:
+            ar_w, ar_h = map(int, ratio.split(":"))
+        else:
+            # "keep original" or anything unrecognised: keep the source framing.
+            ar_w, ar_h = src_w, src_h
 
-        # Get metadata for dimensions
-        cap = cv2.VideoCapture(input_path)
-        src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        cap.release()
-
-        # Resolve Target Dimensions
-        ar_w, ar_h = map(int, aspect_ratio.split(':'))
         if resolution == "keep original":
             # Use source dimensions but apply the aspect ratio
             if ar_w / ar_h >= src_w / src_h:
@@ -71,35 +156,128 @@ class OpenCVVideoEngine(VideoEngine):
             else:
                 target_w, target_h = int(src_h * ar_w / ar_h), src_h
         else:
-            target_w, target_h = map(int, res_map.get(resolution, resolution).split('x'))
+            res_map = _load_config("resolutions.json")
+            target_w, target_h = map(int, res_map.get(resolution, resolution).split("x"))
+
         # Ensure dimensions are even (required by most codecs)
-        target_w = target_w - (target_w % 2)
-        target_h = target_h - (target_h % 2)
+        return _make_even(target_w), _make_even(target_h)
+
+    def resolve_output_dimensions(self, input_path: str, aspect_ratio: str, resolution: str) -> Tuple[int, int]:
+        """The frame size `process_clip` would render at, without rendering it.
+
+        Captions are sized as percentages of the output frame, so whatever
+        builds the subtitle file has to resolve these first.
+        """
+        src_w, src_h, _ = probe_video(input_path)
+        return self._resolve_target_dimensions(src_w, src_h, aspect_ratio, resolution)
+
+    def process_clip(
+        self, input_path: str, output_path: str, start: float, end: float,
+        aspect_ratio: str, resolution: str, subtitle_path: Optional[str] = None,
+    ) -> None:
+        src_w, src_h, fps = probe_video(input_path)
+        target_w, target_h = self._resolve_target_dimensions(src_w, src_h, aspect_ratio, resolution)
 
         # Smart Center
         subj_x, subj_y = self.get_subject_center(input_path, start) or (0.5, 0.5)
-        
-        # Crop Math
-        scale, x1, y1 = calculate_crop_params(src_w, src_h, target_w, target_h, subj_x, subj_y)
-        
-        # FFmpeg command
+
+        crop_w, crop_h, crop_x, crop_y = calculate_crop_rect(
+            src_w, src_h, target_w, target_h, subj_x, subj_y
+        )
+
+        # Crop first, then scale, so the scaler only processes surviving pixels.
+        filters = []
+        if (crop_w, crop_h) != (src_w, src_h):
+            filters.append(f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}")
+        if (crop_w, crop_h) != (target_w, target_h):
+            filters.append(f"scale={target_w}:{target_h}")
+
+        # Burned last, so the captions are drawn at output scale rather than
+        # being cropped or resampled along with the picture.
+        if subtitle_path:
+            filters.append(f"subtitles='{escape_filter_path(str(subtitle_path))}'")
+
         codec = settings_manager.get("codec") or "libx264"
-        logger.info(f"Encoding clip with codec: {codec}")
-        
-        # Build filter string
-        scale_w = int(src_w * scale)
-        scale_h = int(src_h * scale)
-        vf = f"scale={scale_w}:{scale_h},crop={target_w}:{target_h}:{x1}:{y1}"
-        
+        logger.info(f"Encoding clip with codec: {codec}, target={target_w}x{target_h}, crop={crop_w}x{crop_h}+{crop_x}+{crop_y}")
+
         cmd = [
-            'ffmpeg', '-y',
+            'ffmpeg', '-y', '-nostdin', '-loglevel', 'error',
             '-ss', str(start),
             '-to', str(end),
             '-i', input_path,
-            '-vf', vf,
-            '-c:v', codec,
-            '-c:a', 'aac',
-            output_path
+            '-map', '0:v:0', '-map', '0:a:0?',
         ]
-        
-        subprocess.run(cmd, check=True)
+        if filters:
+            cmd += ['-vf', ','.join(filters)]
+        cmd += ['-c:v', codec]
+        cmd += build_encoder_args(codec, target_w, target_h, fps)
+        cmd += [
+            '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac', '-b:a', '128k',
+            '-movflags', '+faststart',
+            output_path,
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.error(f"ffmpeg failed for {output_path}: {result.stderr.strip()}")
+            raise subprocess.CalledProcessError(result.returncode, cmd, stderr=result.stderr)
+
+    def extract_frame(
+        self, input_path: str, output_path: str, timestamp: float,
+        aspect_ratio: str, resolution: str, subtitle_path: Optional[str] = None,
+        framing_timestamp: Optional[float] = None,
+    ) -> None:
+        """Writes one frame of the source as an image, framed like the clip.
+
+        The crop and scale are the ones `process_clip` would apply, so a still
+        taken from inside a clip's window is the same picture the clip shows at
+        that moment rather than a differently-framed one.
+
+        `framing_timestamp` is the moment the crop is centred on. It defaults to
+        the frame being taken, but a thumbnail for a clip passes the clip's
+        start: the clip is cropped once, around whoever is on screen when it
+        begins, and a still that re-centres itself would not match it.
+
+        `subtitle_path` is burned at time zero, because seeking with `-ss`
+        before the input rebases the output timestamps — which is why a
+        thumbnail's subtitle file is written frozen (`render_still_ass`) rather
+        than reusing the clip's.
+        """
+        src_w, src_h, _ = probe_video(input_path)
+        target_w, target_h = self._resolve_target_dimensions(src_w, src_h, aspect_ratio, resolution)
+
+        framing = timestamp if framing_timestamp is None else framing_timestamp
+        subj_x, subj_y = self.get_subject_center(input_path, framing) or (0.5, 0.5)
+        crop_w, crop_h, crop_x, crop_y = calculate_crop_rect(
+            src_w, src_h, target_w, target_h, subj_x, subj_y
+        )
+
+        filters = []
+        if (crop_w, crop_h) != (src_w, src_h):
+            filters.append(f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}")
+        if (crop_w, crop_h) != (target_w, target_h):
+            filters.append(f"scale={target_w}:{target_h}")
+        if subtitle_path:
+            filters.append(f"subtitles='{escape_filter_path(str(subtitle_path))}'")
+
+        logger.info(f"Extracting frame at {timestamp}s from {input_path} to {output_path}")
+
+        cmd = [
+            'ffmpeg', '-y', '-nostdin', '-loglevel', 'error',
+            '-ss', str(max(0.0, timestamp)),
+            '-i', input_path,
+            '-map', '0:v:0',
+            '-frames:v', '1',
+        ]
+        if filters:
+            cmd += ['-vf', ','.join(filters)]
+        # 2 is the best JPEG quality ffmpeg will give without going lossless.
+        # YouTube caps a thumbnail at 2MB, which a 1080x1920 frame stays well
+        # under at this setting.
+        cmd += ['-q:v', '2', output_path]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.error(f"ffmpeg failed for {output_path}: {result.stderr.strip()}")
+            raise subprocess.CalledProcessError(result.returncode, cmd, stderr=result.stderr)
