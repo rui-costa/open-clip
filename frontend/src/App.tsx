@@ -8,6 +8,7 @@ import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
 import { Breadcrumbs } from './components/Breadcrumbs';
 import { ConfirmationModal } from './components/ConfirmationModal';
+import { ProjectActions } from './components/ProjectDetail/ProjectActions';
 import { ThemeToggle } from './components/ThemeToggle';
 import './index.css';
 
@@ -272,9 +273,25 @@ export default function App() {
         }}>
           <div className="app-header">
             <Header />
-            <Navigation 
-              onHistoryClick={() => { refetchProjects(); navigate('/history'); }} 
-            />
+            {/* Project actions sit with the navigation, not on the page: the
+                pipeline, the export and delete all act on the whole project
+                rather than on anything in view. Rendered only on a project
+                route, and only once its metadata is in — a Delete button that
+                outlived the thing it deletes is worse than no button. */}
+            <div className="app-header__actions">
+              {projectId && projectMetadata && pipelineConfig && (
+                <ProjectActions
+                  metadata={projectMetadata}
+                  pipelineConfig={pipelineConfig}
+                  activeProcesses={activeProcesses}
+                  onExecuteAction={handleExecuteAction}
+                  onDeleteProject={handleDeleteProject}
+                />
+              )}
+              <Navigation
+                onHistoryClick={() => { refetchProjects(); navigate('/history'); }}
+              />
+            </div>
           </div>
           <Breadcrumbs items={breadcrumbs} />
         </div>
@@ -362,12 +379,20 @@ export default function App() {
                 ))}
                 {projectMetadata ? (
                   <ProjectDetail
+                    // Keyed, so the page cannot carry one project's state into
+                    // another. React reuses a route element across a change of
+                    // `:id`, and this component holds per-project state —
+                    // which highlight is open, and whether the source video
+                    // failed to play. Every path between two projects goes via
+                    // /history today, which unmounts it; the first direct link
+                    // would have had project B reporting project A's dead
+                    // video.
+                    key={projectMetadata.project_id}
                     metadata={projectMetadata}
                     pipelineConfig={pipelineConfig || { execution_order: [] }}
                     activeProcesses={activeProcesses}
                     onExecuteAction={handleExecuteAction}
                     onDeleteClip={handleDeleteClip}
-                    onDeleteProject={handleDeleteProject}
                   />
                 ) : projectError ? (
                   <div role="alert" style={{ border: '4px solid var(--error)', padding: 'var(--space-md)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', alignItems: 'flex-start' }}>

@@ -16,6 +16,20 @@ export interface PipelineStep {
 interface PipelineControllerProps {
   onExecute: (action: 'START' | 'STOP', step: string) => void;
   steps: PipelineStep[];
+  /**
+   * How much of the page this row is entitled to.
+   *
+   * `lead` is a project with nothing in it: there is nothing to review yet, so
+   * running the pipeline is the only thing to do here and the row says so —
+   * filled run button, full-height steps.
+   *
+   * `compact` is a project that has already produced clips. The pipeline is
+   * then a tool you reach for rather than the thing you came to look at, and
+   * the grid below has a better claim on the fold. The run-everything button
+   * also stops being the loudest control on a page where it is the one you
+   * least want to press by accident.
+   */
+  prominence?: 'lead' | 'compact';
 }
 
 const stepColors = (status: StepStatus) => {
@@ -49,17 +63,29 @@ const isHoverPointer = (event: React.PointerEvent) => event.pointerType === 'mou
 /** The dropdown's own minimum, needed before it has been rendered to measure. */
 const MENU_MIN_WIDTH = 240;
 
-const stepButtonStyle = (status: StepStatus, isHovered: boolean): React.CSSProperties => {
+const stepButtonStyle = (
+  status: StepStatus,
+  isHovered: boolean,
+  isCompact = false
+): React.CSSProperties => {
   const isLocked = status === 'locked';
   return {
     display: 'flex',
-    flexDirection: 'column',
+    // A strip reads along its length, so the status sits beside the step name
+    // rather than under it. Stacked, every cell needed two lines of height and
+    // the row could not be one line tall however short the buttons got.
+    flexDirection: isCompact ? 'row' : 'column',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: isCompact ? 'var(--space-sm)' : undefined,
     textAlign: 'center',
-    width: '100%',
-    padding: 'var(--space-sm)',
-    minHeight: '60px',
+    // Grid cells stretch; strip items are as wide as their label.
+    width: isCompact ? 'auto' : '100%',
+    padding: isCompact ? '0 var(--space-md)' : 'var(--space-sm)',
+    // 44px is the floor for a target, not a comfortable size for one — which
+    // is exactly what the compact row is trading away for the fold.
+    minHeight: isCompact ? '44px' : '60px',
+    whiteSpace: isCompact ? 'nowrap' : undefined,
     border: 'var(--border)',
     ...stepColors(status),
     opacity: isLocked ? 0.3 : 1,
@@ -72,10 +98,11 @@ const stepButtonStyle = (status: StepStatus, isHovered: boolean): React.CSSPrope
   };
 };
 
-const LlmStepMenu: React.FC<{ steps: PipelineStep[]; onExecute: PipelineControllerProps['onExecute'] }> = ({
-  steps,
-  onExecute,
-}) => {
+const LlmStepMenu: React.FC<{
+  steps: PipelineStep[];
+  onExecute: PipelineControllerProps['onExecute'];
+  isCompact?: boolean;
+}> = ({ steps, onExecute, isCompact = false }) => {
   const [isHovered, setIsHovered] = React.useState(false);
   // Hover is only a preview. Pressing the button pins the dropdown so the rows
   // inside it can actually be reached and clicked.
@@ -167,7 +194,7 @@ const LlmStepMenu: React.FC<{ steps: PipelineStep[]; onExecute: PipelineControll
   return (
     <div
       ref={containerRef}
-      style={{ position: 'relative' }}
+      style={{ position: 'relative', width: isCompact ? 'auto' : undefined }}
       onPointerEnter={(event) => {
         if (!isHoverPointer(event)) return;
         measureAlignment();
@@ -194,11 +221,11 @@ const LlmStepMenu: React.FC<{ steps: PipelineStep[]; onExecute: PipelineControll
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-controls={isOpen ? menuId : undefined}
-        style={stepButtonStyle(status, isOpen)}
+        style={stepButtonStyle(status, isOpen, isCompact)}
       >
         {/* "LLM Queries" named the implementation. These are the steps where a
             model writes something, which is what the user is choosing between. */}
-        <span style={{ fontWeight: 900, fontSize: '1rem', letterSpacing: '0.5px' }}>
+        <span style={{ fontWeight: 900, fontSize: isCompact ? '0.8rem' : '1rem', letterSpacing: '0.5px' }}>
           AI Steps {isPinned ? '▲' : '▼'}
         </span>
       </button>
@@ -287,7 +314,8 @@ const statusLabel = (step: PipelineStep): string => {
   }
 };
 
-export const PipelineController: React.FC<PipelineControllerProps> = ({ onExecute, steps }) => {
+const PipelineControllerRow: React.FC<PipelineControllerProps> = ({ onExecute, steps, prominence = 'lead' }) => {
+  const isCompact = prominence === 'compact';
   const [hoveredStep, setHoveredStep] = React.useState<string | null>(null);
 
   const llmSteps = steps.filter((step) => step.isLlm);
@@ -303,80 +331,122 @@ export const PipelineController: React.FC<PipelineControllerProps> = ({ onExecut
   // reads in execution order.
   const firstLlmIndex = steps.findIndex((step) => step.isLlm);
 
+  const runAll = (
+    <button
+      onClick={() => onExecute('START', 'all')}
+      // A second press while the pipeline runs queues a duplicate run of
+      // every step against the same project directory.
+      disabled={anyRunning}
+      aria-busy={anyRunning}
+      style={{
+        // Full width only when it leads. In the strip it is one item among the
+        // steps: a button that owns a row of its own is a button the page is
+        // telling you to press, which is the wrong thing to say about
+        // re-running everything on a project that already has clips.
+        width: isCompact ? 'auto' : '100%',
+        padding: isCompact ? '0 var(--space-md)' : 'var(--space-sm)',
+        minHeight: '44px',
+        border: 'var(--border)',
+        // Ghost once the project has clips in it. A filled black bar is a
+        // promise that this is the thing to press, and on a finished
+        // project pressing it re-runs everything.
+        backgroundColor: isCompact ? 'transparent' : 'var(--text)',
+        color: isCompact ? 'var(--text)' : 'var(--bg)',
+        fontWeight: 900,
+        fontSize: isCompact ? '0.8rem' : '1rem',
+        textTransform: 'uppercase',
+        whiteSpace: isCompact ? 'nowrap' : undefined,
+        cursor: anyRunning ? 'not-allowed' : 'pointer',
+        opacity: anyRunning ? 0.5 : 1,
+        textAlign: 'center',
+        transition: 'all 200ms var(--ease-out-quart)',
+      }}
+    >
+      {anyRunning ? 'Pipeline running…' : 'Run full pipeline'}
+    </button>
+  );
+
+  const stepButtons = steps.map((step, index) => {
+    if (step.isLlm) {
+      if (index !== firstLlmIndex) return null;
+      return <LlmStepMenu key="llm-queries" steps={llmSteps} onExecute={onExecute} isCompact={isCompact} />;
+    }
+
+    const isRunning = step.status === 'running';
+    const isLocked = step.status === 'locked';
+    const isHovered = hoveredStep === step.name;
+
+    return (
+      <button
+        key={step.name}
+        disabled={isLocked}
+        onClick={() => onExecute(isRunning ? 'STOP' : 'START', step.name)}
+        // Pointer-typed: a tap would otherwise leave the hover shadow
+        // stuck on the last step touched.
+        onPointerEnter={(event) => isHoverPointer(event) && setHoveredStep(step.name)}
+        onPointerLeave={(event) => isHoverPointer(event) && setHoveredStep(null)}
+        aria-busy={isRunning}
+        className={`pipeline-step-btn ${isRunning ? 'pipeline-step-running' : ''} ${step.status === 'executed' || step.status === 'completed' ? 'pipeline-step-success' : ''} ${step.status === 'error' ? 'pipeline-step-error' : ''}`}
+        style={stepButtonStyle(step.status, isHovered, isCompact)}
+      >
+        <span style={{ fontWeight: 900, fontSize: isCompact ? '0.8rem' : '1rem', letterSpacing: '0.5px' }}>
+          {step.label}
+        </span>
+        {/* No opacity here. This label is the reason status is not
+            colour-only (see statusLabel), and fading it to 0.85 over the
+            accent fill put it at 3.4:1 — below the threshold it exists
+            to satisfy. */}
+        <span style={{ fontWeight: 700, fontSize: '0.65rem', letterSpacing: '0.5px' }}>
+          {statusLabel(step)}
+        </span>
+      </button>
+    );
+  });
+
+  // The whole run landing. Sits under the dropdown's z-index and is clipped by
+  // its own wrapper, so it cannot bleed over the row or trap pointer events.
+  const sweep = celebrateComplete && (
+    <span className="sweep-clip" aria-hidden="true">
+      <span className="sweep-band sweep-band--success" />
+    </span>
+  );
+
+  // One line, not three.
+  // --------------------------------------------------------------------------
+  // Compact used to mean "the same two blocks, with smaller buttons": a
+  // full-width run bar on its own row, then a grid whose 140px minimum track
+  // wrapped the steps onto two or three rows — and onto one row *each* below
+  // 600px, where the grid collapses to a single column. Six steps came to
+  // 324px of pipeline before the run bar was counted, which is how a tool row
+  // ended up holding half the page against the clip grid it exists to fill.
+  if (isCompact) {
+    return (
+      <div className="pipeline-controller">
+        <div className="pipeline-strip" style={{ position: 'relative' }}>
+          {sweep}
+          {runAll}
+          {stepButtons}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="pipeline-controller">
-      <div style={{ marginBottom: 'var(--space-md)' }}>
-        <button
-          onClick={() => onExecute('START', 'all')}
-          // A second press while the pipeline runs queues a duplicate run of
-          // every step against the same project directory.
-          disabled={anyRunning}
-          aria-busy={anyRunning}
-          style={{
-            width: '100%',
-            padding: 'var(--space-sm)',
-            minHeight: '44px',
-            border: 'var(--border)',
-            backgroundColor: 'var(--text)',
-            color: 'var(--bg)',
-            fontWeight: 900,
-            fontSize: '1rem',
-            textTransform: 'uppercase',
-            cursor: anyRunning ? 'not-allowed' : 'pointer',
-            opacity: anyRunning ? 0.5 : 1,
-            textAlign: 'center',
-            transition: 'all 200ms var(--ease-out-quart)',
-          }}
-        >
-          {anyRunning ? 'Pipeline running…' : 'Run full pipeline'}
-        </button>
-      </div>
+      <div style={{ marginBottom: 'var(--space-md)' }}>{runAll}</div>
       <div className="pipeline-steps" style={{ position: 'relative' }}>
-        {/* The whole run landing. Sits under the dropdown's z-index and is
-            clipped by its own wrapper, so it cannot bleed over the row or
-            trap pointer events. */}
-        {celebrateComplete && (
-          <span className="sweep-clip" aria-hidden="true">
-            <span className="sweep-band sweep-band--success" />
-          </span>
-        )}
-        {steps.map((step, index) => {
-          if (step.isLlm) {
-            if (index !== firstLlmIndex) return null;
-            return <LlmStepMenu key="llm-queries" steps={llmSteps} onExecute={onExecute} />;
-          }
-
-          const isRunning = step.status === 'running';
-          const isLocked = step.status === 'locked';
-          const isHovered = hoveredStep === step.name;
-
-          return (
-            <button
-              key={step.name}
-              disabled={isLocked}
-              onClick={() => onExecute(isRunning ? 'STOP' : 'START', step.name)}
-              // Pointer-typed: a tap would otherwise leave the hover shadow
-              // stuck on the last step touched.
-              onPointerEnter={(event) => isHoverPointer(event) && setHoveredStep(step.name)}
-              onPointerLeave={(event) => isHoverPointer(event) && setHoveredStep(null)}
-              aria-busy={isRunning}
-              className={`pipeline-step-btn ${isRunning ? 'pipeline-step-running' : ''} ${step.status === 'executed' || step.status === 'completed' ? 'pipeline-step-success' : ''} ${step.status === 'error' ? 'pipeline-step-error' : ''}`}
-              style={stepButtonStyle(step.status, isHovered)}
-            >
-              <span style={{ fontWeight: 900, fontSize: '1rem', letterSpacing: '0.5px' }}>
-                {step.label}
-              </span>
-              {/* No opacity here. This label is the reason status is not
-                  colour-only (see statusLabel), and fading it to 0.85 over the
-                  accent fill put it at 3.4:1 — below the threshold it exists
-                  to satisfy. */}
-              <span style={{ fontWeight: 700, fontSize: '0.65rem', letterSpacing: '0.5px' }}>
-                {statusLabel(step)}
-              </span>
-            </button>
-          );
-        })}
+        {sweep}
+        {stepButtons}
       </div>
     </div>
   );
 };
+
+/**
+ * Memoised: the project page re-renders twice a second while a step runs, and
+ * this row is a dozen buttons plus a menu that only change when a status
+ * changes — three or four times over a whole pipeline. `steps` is memoised by
+ * the caller on the statuses themselves, and `onExecute` is a `useCallback` up
+ * in App, so the bail-out actually holds.
+ */
+export const PipelineController = React.memo(PipelineControllerRow);

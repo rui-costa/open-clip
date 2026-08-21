@@ -94,7 +94,36 @@ const renderedClip: ClipData = {
 
 const previewClip: ClipData = { ...renderedClip, filename: null, isRendered: false, original_end: 65 };
 
+/** Both halves of every state the card paints: the colour and the words. */
+const statesOf = (element: HTMLElement) => ({
+  background: element.style.backgroundColor,
+  color: element.style.color,
+});
+
 describe('Clip Component', () => {
+  // Colour on this card is semantic and inherited from the pipeline row:
+  // accent is something happening now or an exception, success is a thing that
+  // is finished and cannot be taken back. Every one of them carries words too,
+  // because DESIGN.md does not allow status by colour alone.
+  describe('state colour', () => {
+    it('shows captions already in the pixels as done, not as an exception', async () => {
+      renderClip({ ...renderedClip, captionsBurned: true });
+
+      const button = await screen.findByLabelText('Caption settings, already burned into this file');
+      expect(statesOf(button).background).toBe('var(--success)');
+      expect(statesOf(button).color).toBe('var(--on-success)');
+    });
+
+    it('keeps the accent for a clip that is merely the exception', async () => {
+      renderClip(renderedClip);
+
+      // Not burned, following the project: the plain card, no colour at all.
+      const button = await screen.findByLabelText('Caption settings, following the project');
+      expect(statesOf(button).background).toBe('');
+      expect(statesOf(button).color).toBe('var(--text)');
+    });
+  });
+
   it('plays a rendered clip from its own cut file', () => {
     renderClip(renderedClip);
 
@@ -348,15 +377,14 @@ describe('Clip Component', () => {
       expect(screen.getByRole('dialog')).toHaveTextContent(/adds a second video/);
     });
 
-    it('says a published clip is already live, and where it is edited', () => {
+    it('makes no claim about a published clip still being there', () => {
       renderClip({ ...renderedClip, youtubeUrl: 'https://youtu.be/vid-1', youtubeVideoId: 'vid-1' });
 
-      expect(screen.getByRole('link', { name: /Published to YouTube/ }).getAttribute('href')).toBe(
-        'https://youtu.be/vid-1'
-      );
-      // A Short's related video can only be attached in Studio, so the card
-      // points at the page that has the control.
-      expect(screen.getByRole('link', { name: /Studio/ })).toBeDefined();
+      // The card makes no claim about YouTube: it cannot see a video deleted
+      // there afterwards, so anything it said went stale silently. The upload
+      // button's own warning is what is left.
+      expect(screen.queryByRole('link', { name: /View on YouTube/ })).toBeNull();
+      expect(screen.queryByText('Published')).toBeNull();
     });
 
     it('opens the thumbnail editor on the frame the clip starts at', async () => {
@@ -691,7 +719,9 @@ describe('Clip Component', () => {
     // the title against a picture that already has one.
     it('places a burned title against the source instead of the cut file', async () => {
       renderClip({ ...renderedClip, overlayBurned: true }, 9 / 16);
-      fireEvent.click(await screen.findByLabelText('Edit overlay text'));
+      // A burned title names its own state, so the button is no longer just
+      // "Edit overlay text" for this clip.
+      fireEvent.click(await screen.findByLabelText('Overlay text, already burned into this file'));
 
       expect(screen.getByRole('dialog').querySelector('video')?.getAttribute('src')).toBe(SOURCE_URL);
     });

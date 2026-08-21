@@ -33,7 +33,7 @@ interface ClipManagerProps {
   isLoading?: boolean;
 }
 
-export const ClipManager: React.FC<ClipManagerProps> = ({ projectId, clips, sourceUrl, aspectRatio, clipPreview, onDeleteClip, isLoading }) => {
+const ClipGrid: React.FC<ClipManagerProps> = ({ projectId, clips, sourceUrl, aspectRatio, clipPreview, onDeleteClip, isLoading }) => {
   const [playingClipIndex, setPlayingClipIndex] = useState<number | null>(null);
 
   if (clips.length === 0 && !isLoading) {
@@ -113,3 +113,11 @@ export const ClipManager: React.FC<ClipManagerProps> = ({ projectId, clips, sour
     </div>
   );
 };
+
+/**
+ * Memoised, like the cards inside it. Without this the grid re-ran on every
+ * poll tick of a running step and rebuilt forty card elements for `React.memo`
+ * to then throw away one by one — the memo on `Clip` was saving the render of
+ * each card but not the work of offering it one.
+ */
+export const ClipManager = React.memo(ClipGrid);

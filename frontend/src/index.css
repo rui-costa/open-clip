@@ -13,6 +13,12 @@
   --error: #D40000;
   --text-main: var(--text);
   --text-muted: #6B6B6B;
+  /* What a dead label is painted in, rather than a faded live one. Fading text
+     with `opacity` is how a checked colour silently stops passing: 0.5 over
+     --text-muted lands at 2.0:1. This is 4.8:1, because a disabled control's
+     label is where the reason for the disabling lives and still has to be
+     read. What marks it as dead is the missing underline and the cursor. */
+  --text-disabled: #6E6E6E;
   --text-accent: var(--accent);
   --on-success: #121212;
   --bg-secondary: #EDEDED;
@@ -39,6 +45,8 @@
   --success: #00CC33;
   --error: #FF4D4D;
   --text-muted: #A0A0A0;
+  /* 5.1:1 here, the same job as its light-theme twin. */
+  --text-disabled: #858585;
   --bg-secondary: #1E1E1E;
   --btn-hover-bg: #2A2A2A;
   --btn-hover-text: var(--text);
@@ -108,6 +116,24 @@ h2 {
   text-transform: uppercase;
   margin: var(--space-md) 0;
   letter-spacing: -0.02em;
+}
+
+/* Links.
+   ------------------------------------------------------------------------
+   There was no rule for `a` at all, so every link in the application rendered
+   in the user agent's default blue: #0000EE, which is 2.3:1 on the dark
+   theme's background and belongs to no palette in this system. Accent instead
+   — 5.31:1 light, 7.28:1 dark — and underlined, because colour alone is not
+   what tells you a thing is a link. */
+a {
+  color: var(--text-accent);
+  text-underline-offset: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  a:hover {
+    color: var(--text);
+  }
 }
 
 button {
@@ -513,7 +539,13 @@ button[aria-disabled='true'] {
   text-decoration: underline;
   text-underline-offset: 4px;
   cursor: pointer;
-  text-align: left;
+  /* `start`, not `left`: these are logical rows and one of them is a label
+     that names its own precondition, which is a sentence in any language. */
+  text-align: start;
+  /* An inline-flex box sizes to max-content, so a label longer than the row —
+     "Export markers — run Highlights first", or any translation of it — hung
+     over the edge of the bar instead of wrapping inside it. */
+  max-width: 100%;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -522,12 +554,16 @@ button[aria-disabled='true'] {
   }
 }
 
+/* No `opacity` here, unlike the base `button:disabled` rule. That one fades a
+   filled button, where the fill carries the state; this is bare text on the
+   page background, and fading it took the label to 2.0:1. The underline is
+   what says "pressable", so dropping it is what says "not any more". */
 .text-action:disabled,
 .text-action[aria-disabled='true'] {
-  color: var(--text-muted);
+  color: var(--text-disabled);
   text-decoration: none;
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: 1;
 }
 
 /* Every project-level option in one row.
@@ -549,6 +585,16 @@ button[aria-disabled='true'] {
 /* Two clusters inside the bar: settings edited in place, then triggers that
    open a dialog or download a file. The gap between clusters is the wider one,
    so the grouping survives without a painted separator. */
+/* In the header menu the bar has a column of its own to work in, so the two
+   groups stack instead of competing for one line. */
+.options-bar--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-md);
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
 .options-bar__group {
   display: flex;
   flex-wrap: wrap;
@@ -562,6 +608,23 @@ button[aria-disabled='true'] {
   gap: var(--space-sm);
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+/* The bar's own control. This was six inline properties repeated on each of
+   the three selects, which is three places to edit for one change — and the
+   2px border is a real tier of this system (`.status-badge` and the output
+   table headers use it too) that was never given a name. */
+.options-bar__select {
+  min-height: 44px;
+  padding: 2px var(--space-sm);
+  border: 2px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-main);
+  font-size: 0.8rem;
+  font-weight: 600;
+  /* No fixed width. A resolution key or a translated "keep original" is as
+     long as it is, and the bar wraps to fit it. */
+  max-width: 100%;
 }
 
 /* A state pill riding along with a text action. `.status-badge` is
@@ -739,44 +802,154 @@ button[aria-disabled='true'] {
   }
 }
 
-.project-layout {
+/* The same pipeline, on a page that is about something else.
+   ------------------------------------------------------------------------
+   A strip rather than a grid: items as wide as their labels, wrapping only
+   when the window makes them, with the run-everything button sitting in the
+   row as one item among the steps. The grid above is a layout for a row that
+   *is* the page; this is a layout for a row that is a tool on it. One line on
+   any normal window, two on a phone — against the three-plus the grid needed,
+   which is what was costing the clip grid the fold. */
+.pipeline-strip {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-md);
-  align-items: flex-start;
+  align-items: center;
+  gap: var(--space-sm);
 }
 
-.project-layout__main {
-  flex: 1 1 420px;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
+/* Nothing in the strip stretches: a flex item's default `stretch` would give
+   every button the height of the tallest one, which is the grid behaviour this
+   is replacing. */
+.pipeline-strip > * {
+  flex: 0 0 auto;
 }
 
-.project-layout__aside {
-  flex: 1 1 320px;
-  max-width: 400px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-/* Sticky only when there is room to be sticky.
+/* The project page, top to bottom.
    ------------------------------------------------------------------------
-   The aside holds the source video and the whole caption panel, which is
-   taller than a landscape phone or a short laptop window. Pinning it there
-   parked the top of the panel on screen and put its lower controls somewhere
-   the page could no longer scroll to. The height query keeps it unpinned on
-   short viewports, and the max-height gives it its own scrollbar rather than
-   trusting the viewport to be tall enough. */
-@media (min-width: 900px) and (min-height: 700px) {
-  .project-layout__aside {
-    position: sticky;
-    top: var(--space-md);
-    max-height: calc(100vh - (2 * var(--space-md)));
-    overflow-y: auto;
+   One column. It was two: a main column and a sticky 400px aside holding the
+   uncut source video — the one video on the page nobody needs to watch, taking
+   40% of the row and half the fold from the clips cut out of it. The grid still
+   previews from the source; it just no longer plays it twice. */
+
+.project-detail {
+  display: flex;
+  flex-direction: column;
+  /* Not one gap for everything: the header belongs to the pipeline under it,
+     the tools belong to nothing, and the grid wants air. Set per-block below. */
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+/* Project actions, in the primary bar.
+   ------------------------------------------------------------------------
+   The pipeline, the export and delete: three things that act on the whole
+   project rather than on anything you can see. They were a band across the
+   page, a link in a row of settings and a lone button at the foot; they are
+   chrome, and they live with the navigation now.
+
+   Sized like the nav buttons beside them — ghost, uppercase, 44px — because
+   that is what they are now. */
+.project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.nav-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 44px;
+  padding: 0 var(--space-md);
+  border: var(--border);
+  background: transparent;
+  color: var(--text);
+  font-weight: 900;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 200ms var(--ease-out-quart), background 200ms var(--ease-out-quart), color 200ms var(--ease-out-quart);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .nav-action:not(:disabled):hover {
+    background: var(--btn-hover-bg);
+    color: var(--btn-hover-text);
+    transform: translate(2px, 2px);
   }
+
+  .nav-action--danger:not(:disabled):hover {
+    background: var(--error);
+    color: var(--bg);
+  }
+}
+
+/* No `opacity` on the text: see --text-disabled. */
+.nav-action:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.nav-action--danger {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+/* Hangs over the page rather than pushing it down: this is a menu in the
+   header, and the page below it must not reflow every time the pipeline is
+   glanced at. Above the clip cards, which raise themselves to 3 on hover. */
+.project-actions__menu {
+  position: absolute;
+  top: calc(100% + var(--space-sm));
+  inset-inline-end: 0;
+  z-index: 30;
+  min-width: min(560px, 90vw);
+  padding: var(--space-md);
+  border: var(--border);
+  background: var(--bg);
+  box-shadow: 4px 4px 0px var(--border-color);
+}
+
+/* The writing is long-form — a highlight's hook and quote and three social
+   posts, and under it whatever tables a prompt-defined task returned. It gets a
+   wider menu than the controls do, and a ceiling with its own scrollbar rather
+   than a menu that runs off the bottom of the window. */
+.project-actions__menu--wide {
+  min-width: min(720px, 92vw);
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+}
+
+.project-actions__error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--error);
+}
+
+/* The grid is the page. Nothing is above it any more but the bar the whole
+   application carries: the pipeline, the settings, the writing, the export and
+   delete are all up there, because none of them is a clip. */
+.project-clips {
+  margin-top: var(--space-md);
+}
+
+/* The two things that leave the application. */
+.project-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  border-top: var(--border);
+  padding-top: var(--space-md);
+  margin-top: var(--space-xl);
 }
 
 .wordmark-link {
@@ -822,6 +995,17 @@ button[aria-disabled='true'] {
   width: 100%;
   border-bottom: var(--border);
   padding-bottom: var(--space-sm);
+}
+
+/* Project actions and the primary nav share the trailing edge. They wrap
+   together on a narrow window rather than the project actions being pushed
+   under the wordmark on their own. */
+.app-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+  min-width: 0;
 }
 
 /* Motion

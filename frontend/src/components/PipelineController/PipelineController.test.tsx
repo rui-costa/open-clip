@@ -16,6 +16,56 @@ const renderController = (onExecute = vi.fn()) => {
 };
 
 describe('PipelineController', () => {
+  // Compact is not "the same two blocks with smaller buttons".
+  // --------------------------------------------------------------------------
+  // It was, and that was the bug: a full-width run bar on a row of its own,
+  // then a grid whose 140px minimum track wrapped four steps onto two or three
+  // rows — and onto one row each below 600px, where the grid collapses to a
+  // single column. The pipeline held half the page against the clip grid it
+  // exists to fill.
+  describe('compact', () => {
+    const renderCompact = () =>
+      render(<PipelineController onExecute={vi.fn()} steps={steps} prominence="compact" />);
+
+    it('puts the whole pipeline in one strip, run button included', () => {
+      const { container } = renderCompact();
+
+      const strip = container.querySelector('.pipeline-strip');
+      expect(strip).not.toBeNull();
+      // The grid is gone, not merely restyled.
+      expect(container.querySelector('.pipeline-steps')).toBeNull();
+      // And the run button is inside the strip rather than on a row above it.
+      const runAll = screen.getByRole('button', { name: /Run full pipeline/i });
+      expect(runAll.parentElement).toBe(strip);
+      expect(runAll.style.width).toBe('auto');
+    });
+
+    it('sizes every item in the strip the same, the AI menu included', () => {
+      renderCompact();
+
+      // This trigger is built by a different component and was reading the
+      // default prominence, so it stood 60px tall in a row of 44px buttons.
+      const aiSteps = screen.getByRole('button', { name: /AI Steps/i });
+      const step = screen.getByRole('button', { name: /Clipper/i });
+
+      expect(aiSteps.style.minHeight).toBe('44px');
+      expect(step.style.minHeight).toBe('44px');
+      // Strip items are as wide as their label; grid cells stretch.
+      expect(aiSteps.style.width).toBe('auto');
+      expect(step.style.width).toBe('auto');
+      // One line: the status reads beside the step name, not under it.
+      expect(step.style.flexDirection).toBe('row');
+    });
+
+    it('leaves the grid alone when the pipeline leads', () => {
+      const { container } = render(<PipelineController onExecute={vi.fn()} steps={steps} />);
+
+      expect(container.querySelector('.pipeline-steps')).not.toBeNull();
+      expect(container.querySelector('.pipeline-strip')).toBeNull();
+      expect(screen.getByRole('button', { name: /Clipper/i }).style.minHeight).toBe('60px');
+    });
+  });
+
   it('collapses every LLM step into a single button', () => {
     renderController();
 

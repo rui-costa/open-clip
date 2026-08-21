@@ -76,6 +76,14 @@ vi.mock('../../api', () => ({
   getResolutionMap: vi.fn().mockResolvedValue({ '1080p': '1920x1080' }),
   getCaptionStyles: vi.fn().mockResolvedValue({}),
   getClipCaptions: vi.fn(),
+  // Every published clip asks whether its video is still on YouTube. "Still
+  // there" is the default; the tests that care say otherwise.
+  getClipPublication: vi.fn().mockResolvedValue({
+    published: true,
+    video_id: 'abc123',
+    url: 'https://youtube.com/watch?v=abc123',
+    checked: true,
+  }),
   updateProjectSettings: vi.fn().mockResolvedValue({ status: 'success' }),
   updateClipOverlay: vi.fn().mockResolvedValue({ status: 'success', overlay: null }),
   uploadClip: vi.fn(),
@@ -276,6 +284,64 @@ describe('ClipDetail Component', () => {
 
     const studio = (await screen.findByRole('link', { name: /Studio/i })) as HTMLAnchorElement;
     expect(studio.href).toBe('https://studio.youtube.com/video/abc123/edit');
+  });
+
+  // Nothing tells this application when a video it published is deleted, so
+  // the record outlives the video. The server checks and clears it; the page
+  // must not go on offering a dead link in the meantime.
+  it('stops claiming a clip is published once its video has gone from YouTube', async () => {
+    const { getClipPublication } = await import('../../api');
+    vi.mocked(getClipPublication).mockResolvedValue({
+      published: false,
+      video_id: null,
+      url: null,
+      checked: true,
+    });
+    vi.mocked(getProjectMetadata).mockResolvedValue(
+      project([
+        highlight({
+          viral_hook_text: 'PUBLISHED',
+          is_clip_generated: true,
+          generated_clip_filename: 'first.mp4',
+          youtube_video_id: 'abc123',
+          youtube_url: 'https://youtube.com/watch?v=abc123',
+        }),
+      ])
+    );
+
+    renderDetail('0');
+
+    await waitFor(() => expect(screen.queryByRole('link', { name: /Studio/i })).toBeNull());
+    expect(screen.queryByText(/youtube\.com\/watch/)).toBeNull();
+    // And the button that would send a thumbnail to it is gone with it.
+    expect(screen.queryByRole('button', { name: /Upload thumbnail to YouTube/i })).toBeNull();
+  });
+
+  // No channel connected, no read scope, no network. Not being able to ask is
+  // not a "no", and a good record must survive it.
+  it('keeps the record when the check could not be made at all', async () => {
+    const { getClipPublication } = await import('../../api');
+    vi.mocked(getClipPublication).mockResolvedValue({
+      published: true,
+      video_id: 'abc123',
+      url: 'https://youtube.com/watch?v=abc123',
+      checked: false,
+    });
+    vi.mocked(getProjectMetadata).mockResolvedValue(
+      project([
+        highlight({
+          viral_hook_text: 'PUBLISHED',
+          is_clip_generated: true,
+          generated_clip_filename: 'first.mp4',
+          youtube_video_id: 'abc123',
+          youtube_url: 'https://youtube.com/watch?v=abc123',
+        }),
+      ])
+    );
+
+    renderDetail('0');
+
+    expect(await screen.findByRole('link', { name: /Studio/i })).toBeDefined();
   });
 
   // A thumbnail edited after the clip went up, or a clip published before the

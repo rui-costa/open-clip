@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { getStudioEditUrl, uploadClipThumbnail } from '../../api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getClipPublication, getStudioEditUrl, uploadClipThumbnail } from '../../api';
 import { Button } from '../Button';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { describeRequestFailure, useClipRender } from '../../hooks/useClipRender';
@@ -57,6 +58,34 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
   hasOverlay = false,
   onEditThumbnail,
 }) => {
+  const queryClient = useQueryClient();
+
+  // Nothing tells this application when a video it published is deleted, so
+  // the record outlives the video — a dead link here, and a thumbnail button
+  // pointed at nothing. The server checks with YouTube and clears the record
+  // if it has gone, so asking is also the fix; the project is refetched to
+  // pick the correction up.
+  const { data: publication } = useQuery({
+    queryKey: ['clipPublication', projectId, clipIndex],
+    queryFn: () => getClipPublication(projectId, clipIndex),
+    enabled: !!youtubeVideoId,
+    // The answer changes on YouTube, not here, so it is not worth re-asking on
+    // every remount of this page.
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
+  React.useEffect(() => {
+    if (publication && publication.checked && !publication.published) {
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['projectMetadata', projectId] });
+    }
+  }, [publication, projectId, queryClient]);
+
+  // What the page may claim. A record the server has just told us is stale is
+  // not shown for the moment it takes the project to come back without it.
+  const isPublished = !!youtubeVideoId && !(publication?.checked && !publication.published);
+
   const [isSendingThumbnail, setIsSendingThumbnail] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const [actionResult, setActionResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -152,7 +181,7 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
           Cutting the clip again, then publishing it. This keeps going if you leave the page.
         </p>
       )}
-      {youtubeUrl && (
+      {isPublished && youtubeUrl && (
         // The published video, named as such. Publishing cannot be undone from
         // here, so the page has to show that it already happened rather than
         // leaving the button looking untouched.
@@ -163,7 +192,7 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
           </a>
         </p>
       )}
-      {youtubeVideoId && (
+      {isPublished && (
         // Not another upload, and deliberately not behind a confirmation: the
         // video keeps its id, its views and its comments, and only the picture
         // changes. For a thumbnail edited after the clip went up — and for the
@@ -178,7 +207,7 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
           {isSendingThumbnail ? 'Sending the thumbnail…' : 'Upload thumbnail to YouTube'}
         </Button>
       )}
-      {youtubeVideoId && (
+      {isPublished && youtubeVideoId && (
         // The one part of publishing this app cannot finish. A Short's related
         // video is set in Studio and nowhere else — the API has no field for
         // it, and the link in the description does not create it — so the step

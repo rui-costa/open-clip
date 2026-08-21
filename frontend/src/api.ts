@@ -399,6 +399,58 @@ export const getMarkerEdlUrl = (projectId: string, recordStart = '01:00:00:00') 
   return `${BASE_URL}/project/${projectId}/markers.edl?start=${encodeURIComponent(recordStart)}`;
 };
 
+/**
+ * The filename the server named the attachment, or null when it did not say.
+ *
+ * Cross-origin, this header is only readable because the backend lists it in
+ * `Access-Control-Expose-Headers`; every caller still needs a fallback name for
+ * the case where it is not there.
+ */
+const filenameFromResponse = (response: Response): string | null => {
+  const disposition = response.headers.get('Content-Disposition');
+  const match = disposition?.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+  return match ? decodeURIComponent(match[1]) : null;
+};
+
+/** Hands a fetched body to the browser as a file, then releases it. */
+const saveBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // Revoked on the next frame rather than immediately: Safari has not always
+  // finished reading the object URL by the time click() returns.
+  requestAnimationFrame(() => URL.revokeObjectURL(url));
+};
+
+/**
+ * Downloads the marker EDL through fetch rather than by following the link.
+ *
+ * The plain `<a download>` works only on the happy path. The API is a
+ * different origin from the app, so `download` is ignored and the click is a
+ * top-level navigation — and on a failure the backend answers with a JSON
+ * error, which the browser renders as a page. The export then costs the user
+ * the whole app. Fetching it means a failure is an error message on the page
+ * that asked for it, and the anchor is still there for middle-click.
+ */
+export const downloadMarkerEdl = async (
+  projectId: string,
+  fallbackName: string,
+  recordStart?: string
+): Promise<void> => {
+  const response = await fetch(getMarkerEdlUrl(projectId, recordStart));
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `Export failed with status ${response.status}`);
+  }
+
+  saveBlob(await response.blob(), filenameFromResponse(response) ?? `${fallbackName}_markers.edl`);
+};
+
 // Chapter exports. `recordStart` must match the timecode the Resolve timeline
 // starts at, same rule as the highlight markers above.
 export const getChapterEdlUrl = (projectId: string, recordStart = '01:00:00:00') => {
@@ -466,6 +518,31 @@ export const getClipVideoUrl = (projectId: string, filename: string, version?: s
  * from here cannot attach it. The link in the description is a different thing.
  * This is the page that does have the control.
  */
+/**
+ * Whether this clip's published video is still on YouTube.
+ *
+ * Nothing tells this application when a video it published is deleted, so the
+ * record outlives the video: a dead link on the clip page, and a thumbnail
+ * button pointed at nothing. Asked when a clip is opened; a video that has gone
+ * takes its record with it on the server, so the answer is also the fix.
+ *
+ * `checked` is false when the question could not be asked — no channel
+ * connected, no read scope, no network. That is not a "no", and nothing is
+ * cleared on the strength of it.
+ */
+export type ClipPublication = {
+  published: boolean;
+  video_id: string | null;
+  url: string | null;
+  checked: boolean;
+};
+
+export const getClipPublication = async (
+  projectId: string,
+  clipIndex: number
+): Promise<ClipPublication> =>
+  apiRequest<ClipPublication>(`/project/${projectId}/clip/${clipIndex}/publication`);
+
 export const getStudioEditUrl = (videoId: string) =>
   `https://studio.youtube.com/video/${videoId}/edit`;
 

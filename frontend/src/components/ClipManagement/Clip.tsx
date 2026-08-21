@@ -8,7 +8,6 @@ import {
   getClipVideoUrl,
   getClipCaptions,
   getClipThumbnail,
-  getStudioEditUrl,
   type ClipPreview,
 } from '../../api';
 import { ThumbnailPreview } from './ThumbnailPreview';
@@ -304,7 +303,22 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
           connections, so the later cards simply stalled. The player is mounted
           when the card comes near the viewport; until then the space is
           reserved so arriving media shifts nothing. */}
-      <div ref={mediaRef} className="clip-card__media">
+      <div
+        ref={mediaRef}
+        className="clip-card__media"
+        // Accent for the clip being cut right now, which is the same thing it
+        // means in the pipeline row above. An outline rather than a border so
+        // the picture does not resize when a render starts, and inset so the
+        // ring sits inside the card's own 4px edge instead of doubling it.
+        style={
+          isRendering
+            ? {
+                outline: 'var(--border-width) solid var(--accent)',
+                outlineOffset: 'calc(-1 * var(--border-width))',
+              }
+            : undefined
+        }
+      >
         {/* State and timecode, over the picture. They had a row each of their
             own above the player, which on a grid of a dozen cards was a dozen
             rows of chrome for two facts that fit in a corner. */}
@@ -525,14 +539,24 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
           </Tooltip>
         )}
 
-        <Tooltip text={captions?.locked === false ? 'Captions: custom for this clip' : 'Captions: following the project'}>
+        <Tooltip
+          text={
+            clip.captionsBurned
+              ? 'Captions: already in this file — re-render to change them'
+              : captions?.locked === false
+                ? 'Captions: custom for this clip'
+                : 'Captions: following the project'
+          }
+        >
           <Button
             variant="ghost"
             onClick={() => setIsEditingCaptions(true)}
             aria-label={
-              captions?.locked === false
-                ? 'Caption settings, custom for this clip'
-                : 'Caption settings, following the project'
+              clip.captionsBurned
+                ? 'Caption settings, already burned into this file'
+                : captions?.locked === false
+                  ? 'Caption settings, custom for this clip'
+                  : 'Caption settings, following the project'
             }
             style={{
               padding: 'var(--space-sm)',
@@ -541,10 +565,18 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              // An unlocked clip is the exception, so it is the one that gets
-              // the accent. A locked clip looks like every other card.
-              color: captions?.locked === false ? 'var(--accent)' : 'var(--text)',
-              borderColor: captions?.locked === false ? 'var(--accent)' : undefined,
+              // Three states, and the palette already had all three. Success
+              // when the words are in the file's own pixels: that is done, and
+              // it is the only one of the three a re-render cannot undo.
+              // Accent when this clip is off on its own — the exception, which
+              // is what accent means everywhere else on the card. A locked
+              // clip looks like every other card.
+              ...(clip.captionsBurned
+                ? { backgroundColor: 'var(--success)', color: 'var(--on-success)', borderColor: 'var(--success)' }
+                : {
+                    color: captions?.locked === false ? 'var(--accent)' : 'var(--text)',
+                    borderColor: captions?.locked === false ? 'var(--accent)' : undefined,
+                  }),
             }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -613,11 +645,25 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
           </Button>
         </Tooltip>
 
-        <Tooltip text={showTitle || captions?.overlay ? 'Edit overlay text' : 'Add overlay text'}>
+        <Tooltip
+          text={
+            clip.overlayBurned
+              ? 'Overlay text: already in this file — re-render to change it'
+              : showTitle || captions?.overlay
+                ? 'Edit overlay text'
+                : 'Add overlay text'
+          }
+        >
           <Button
             variant="ghost"
             onClick={() => setIsEditingOverlay(true)}
-            aria-label={captions?.overlay ? 'Edit overlay text' : 'Add overlay text'}
+            aria-label={
+              clip.overlayBurned
+                ? 'Overlay text, already burned into this file'
+                : captions?.overlay
+                  ? 'Edit overlay text'
+                  : 'Add overlay text'
+            }
             style={{
               padding: 'var(--space-sm)',
               minWidth: '44px',
@@ -625,10 +671,15 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              // A clip carrying a title is the exception, so it gets the accent
-              // — the same rule the caption lock next to it follows.
-              color: captions?.overlay ? 'var(--accent)' : 'var(--text)',
-              borderColor: captions?.overlay ? 'var(--accent)' : undefined,
+              // The same three states as the caption lock beside it, read the
+              // same way: burned in is done, a title of its own is the
+              // exception, neither is every other card.
+              ...(clip.overlayBurned
+                ? { backgroundColor: 'var(--success)', color: 'var(--on-success)', borderColor: 'var(--success)' }
+                : {
+                    color: captions?.overlay ? 'var(--accent)' : 'var(--text)',
+                    borderColor: captions?.overlay ? 'var(--accent)' : undefined,
+                  }),
             }}
           >
             {/* A capital T on a baseline: the mark for "type over this". */}
@@ -711,33 +762,6 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
           </Button>
         </Tooltip>
       </div>
-
-      {clip.youtubeUrl && (
-        // Publishing cannot be undone from this app, so a card whose clip is
-        // already live says so rather than leaving its upload button looking
-        // untouched. The Studio link is here for the same reason it is on the
-        // detail page: a Short's related video can only be attached there.
-        <p
-          style={{
-            margin: '0 var(--space-md) var(--space-md) var(--space-md)',
-            fontSize: '0.7rem',
-            color: 'var(--text-muted)',
-            overflowWrap: 'anywhere',
-          }}
-        >
-          <a href={clip.youtubeUrl} target="_blank" rel="noreferrer">
-            Published to YouTube
-          </a>
-          {clip.youtubeVideoId && (
-            <>
-              {' · '}
-              <a href={getStudioEditUrl(clip.youtubeVideoId)} target="_blank" rel="noreferrer">
-                edit in Studio
-              </a>
-            </>
-          )}
-        </p>
-      )}
 
       {actionResult && (
         <div
