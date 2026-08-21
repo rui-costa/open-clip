@@ -102,15 +102,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
   }, [data]);
 
   useEffect(() => {
-    if (!initialized || !data) return;
+    // `debouncedApiKey !== apiKey` means the debounce is still catching up with
+    // the box - right after hydration it still holds the empty initial value,
+    // and saving that would wipe the stored key.
+    if (!initialized || !data || debouncedApiKey !== apiKey) return;
     const serverValue = data.settings?.gemini_api_key || '';
     if (debouncedApiKey !== serverValue) {
       saveSettings({ settings: { gemini_api_key: debouncedApiKey } });
     }
-  }, [debouncedApiKey, data, initialized, saveSettings]);
+  }, [debouncedApiKey, apiKey, data, initialized, saveSettings]);
 
   useEffect(() => {
-    if (!initialized || !data) return;
+    if (!initialized || !data || debouncedYtSecrets !== ytSecrets) return;
     const serverValue = data.settings?.youtube_client_secrets ? JSON.stringify(data.settings.youtube_client_secrets, null, 2) : '';
     if (debouncedYtSecrets !== serverValue) {
       try {
@@ -121,7 +124,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
         setJsonError(true);
       }
     }
-  }, [debouncedYtSecrets, data, initialized, saveSettings]);
+  }, [debouncedYtSecrets, ytSecrets, data, initialized, saveSettings]);
 
   if (isLoading) return <div style={{ padding: 'var(--space-md)', fontWeight: 'bold', textTransform: 'uppercase' }}>Loading settings...</div>;
 
