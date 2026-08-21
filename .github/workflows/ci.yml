@@ -24,7 +24,7 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Run Tests
         run: |
-          pytest backend/tests/unit
+          pytest backend/tests
   
   test-frontend:
     runs-on: ubuntu-latest
