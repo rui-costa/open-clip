@@ -8,6 +8,16 @@
 
 Open-Clip is an automated video processing system designed to manage and clip video projects efficiently. It provides a full-stack solution featuring a Python based backend for processing and a web based frontend for project management.
 
+![A clip in Open-Clip: the player with its title and captions drawn over it, the writing for each platform, the description it would be published with, and the actions](images/clip_detail.png)
+
+Upload an episode, and the pipeline transcribes it, picks the moments worth
+cutting, writes the titles and posts, cuts the clips, and publishes them:
+
+| | |
+| --- | --- |
+| ![The projects page](images/projects_page.png) | ![A project's clip grid](images/project_details.png) |
+| Every project you have. | One card per highlight, with every action on it. |
+
 ## Why This Exists
 
 Managing and clipping long form video content is tedious and time consuming. Open-Clip streamlines this workflow by providing a central dashboard to organize projects, manage metadata, and handle the heavy lifting of video processing.
@@ -92,6 +102,18 @@ npm install
 npm run test
 ```
 
+### Documentation screenshots
+The pictures in `images/` are taken from the standard project — *First Project*,
+the demo that ships in `projects/` — so the same run produces the same pictures
+on any machine. With the stack running, regenerate them after a change to the
+interface:
+```bash
+cd frontend && node scripts/docs-screenshots.mjs
+```
+The script keeps each file's name, because `README.md` and `docs/USER_GUIDE.md`
+embed them by name. It draws a placeholder over the YouTube client secrets
+before the shutter, so a configured machine does not publish its OAuth client.
+
 ### Containers
 `docker/smoke-test.sh` builds both images, starts the stack and checks that it
 works rather than merely that it built — the API and its media serving, the
@@ -114,13 +136,3 @@ Please report any security vulnerabilities by opening a private GitHub Security 
 ## License
 
 AGPL v3 © The Open-Clip Authors
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=rui-costa%2Fopen-clip&type=date&logscale=&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=rui-costa/open-clip&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=rui-costa/open-clip&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=rui-costa/open-clip&type=date&legend=top-left" />
- </picture>
-</a>
