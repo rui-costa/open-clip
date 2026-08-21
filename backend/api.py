@@ -187,6 +187,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'POST, GET, PUT, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-File-Name, Range')
+        self.send_header('Access-Control-Expose-Headers', 'Content-Disposition')
 
     def send_json_response(self, data, code=200):
         self.send_response(code)
@@ -647,6 +648,58 @@ class SimpleHandler(BaseHTTPRequestHandler):
             logger.exception("Failed to update clip thumbnail")
             self.send_cors_error(500, f"Failed to update the thumbnail: {str(e)}")
 
+    def handle_get_clip_publication(self):
+        """Whether this clip's published video is still on YouTube.
+
+        Asked when a clip is opened. Nothing tells this application when a
+        video it published is deleted, so without this the clip page offers a
+        dead link and a thumbnail button pointed at nothing, indefinitely.
+
+        A video that has gone takes its record with it — see
+        `Uploader.verify_publication`. `checked` is false when the question
+        could not be asked at all, which is not the same as a "no".
+        """
+        parts = urlparse(self.path).path.split('/')
+        try:
+            project_id, clip_index = parts[2], int(parts[4])
+        except (IndexError, ValueError):
+            self.send_cors_error(404, "No clip at that index")
+            return
+
+        try:
+            project = Project(project_id)
+            if clip_index < 0 or clip_index >= len(project.highlights):
+                self.send_cors_error(404, f"No clip at index {clip_index}")
+                return
+
+            uploader = pipeline_orchestrator.services.get("upload")
+            if uploader is None:
+                raise RuntimeError("No upload service is configured.")
+            exists = uploader.verify_publication(project, clip_index)
+            highlight = Project(project_id).highlights[clip_index]
+            self.send_json_response({
+                "published": bool(highlight.youtube_video_id),
+                "video_id": highlight.youtube_video_id,
+                "url": highlight.youtube_url,
+                "checked": exists is not None,
+            })
+        except FileNotFoundError:
+            self.send_cors_error(404, f"Project {project_id} not found")
+        except MissingCredentialsError:
+            # No channel connected: the record is all this application has, and
+            # it stands until something can check it.
+            project = Project(project_id)
+            highlight = project.highlights[clip_index]
+            self.send_json_response({
+                "published": bool(highlight.youtube_video_id),
+                "video_id": highlight.youtube_video_id,
+                "url": highlight.youtube_url,
+                "checked": False,
+            })
+        except Exception as e:
+            logger.exception("Failed to verify the publication")
+            self.send_cors_error(500, f"Failed to verify the publication: {str(e)}")
+
     def handle_get_clip_description(self):
         """The YouTube description one clip would be uploaded with.
 
@@ -709,6 +762,8 @@ class SimpleHandler(BaseHTTPRequestHandler):
             self.handle_get_clip_captions_ass()
         elif self.path.startswith('/project/') and urlparse(self.path).path.endswith('/captions'):
             self.handle_get_clip_captions()
+        elif self.path.startswith('/project/') and urlparse(self.path).path.endswith('/publication'):
+            self.handle_get_clip_publication()
         elif self.path.startswith('/project/') and urlparse(self.path).path.endswith('/description'):
             self.handle_get_clip_description()
         elif self.path.startswith('/project/') and urlparse(self.path).path.endswith('/thumbnail'):

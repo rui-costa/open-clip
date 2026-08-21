@@ -211,6 +211,54 @@ class Uploader:
         self._record_upload(project, index, result)
         return result
 
+    def verify_publication(
+        self, project: Project, index: int, client: Optional[YoutubeClient] = None
+    ) -> Optional[bool]:
+        """Whether this clip's published video is still on YouTube.
+
+        Nothing tells this application when a video it published is deleted, so
+        the record outlives the video: the clip page goes on offering a dead
+        link, and the thumbnail button goes on offering to set a picture on
+        nothing. This is the only way to find out, and it is asked lazily —
+        when a clip is opened, and before a thumbnail is sent.
+
+        A video that has gone takes its record with it: the id, the url and the
+        upload timestamp are cleared, so the clip reads as unpublished
+        everywhere and can be published again as though for the first time.
+
+        Returns True if it is there, False if it is gone or was never
+        published, and None when the question could not be asked — no read
+        scope, no network, a quota refusal. None leaves the record alone: not
+        being able to check is not evidence of anything.
+        """
+        highlight = project.highlights[index]
+        if not highlight.youtube_video_id:
+            return False
+
+        client = client or self.open_client()
+        exists = client.video_exists(highlight.youtube_video_id)
+        if exists is None:
+            return None
+        if exists:
+            return True
+
+        logger.info(
+            f"Clip {index} of {project.project_id} points at {highlight.youtube_video_id}, "
+            "which is no longer on YouTube; clearing the record"
+        )
+        self._clear_publication(project, index)
+        return False
+
+    def _clear_publication(self, project: Project, index: int) -> None:
+        """Forgets everything this application knew about a published video."""
+        highlights = project.highlights
+        highlight = highlights[index]
+        highlight.youtube_video_id = None
+        highlight.youtube_url = None
+        highlight.uploaded_at = None
+        highlight.upload_error = None
+        project.set_property("highlights", highlights)
+
     def upload_thumbnail(
         self,
         project: Project,
@@ -235,7 +283,19 @@ class Uploader:
                 "thumbnail on. Upload it first."
             )
 
+        # Checked before anything is sent. A video deleted on YouTube leaves the
+        # id behind, and without this the thumbnail was uploaded against it and
+        # failed somewhere less legible than here.
         client = client or YoutubeClient()
+        if self.verify_publication(project, index, client=client) is False:
+            raise ClipNotPublishedError(
+                "The video this clip was published as is no longer on YouTube, so "
+                "there is nothing to put a thumbnail on. Upload the clip again first."
+            )
+        # Re-read: verify_publication rewrites the highlights when it clears a
+        # record, and this one is about to be used.
+        highlight = project.highlights[index]
+
         logger.info(
             f"Uploader setting the thumbnail of clip {index} on {highlight.youtube_video_id}"
         )

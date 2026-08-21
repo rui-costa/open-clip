@@ -78,6 +78,10 @@ class FakeYoutube:
         self.processing = ["succeeded"]
         self.processing_error = None
         self.status_calls = 0
+        # What `video_exists` answers. None is "could not ask" — no read scope,
+        # no network, a quota refusal — which is not the same as a "no".
+        self.exists = True
+        self.exists_calls = []
         self.started = threading.Event()
         self.release = threading.Event()
         self.block = False
@@ -95,6 +99,10 @@ class FakeYoutube:
         answer = self.processing[min(self.status_calls, len(self.processing) - 1)]
         self.status_calls += 1
         return answer
+
+    def video_exists(self, video_id):
+        self.exists_calls.append(video_id)
+        return self.exists
 
     def set_thumbnail(self, video_id, file_path):
         if self.thumbnail_error:
@@ -331,6 +339,77 @@ def test_a_published_clip_can_be_given_its_thumbnail_again(project_root):
     assert thumbnails.calls == []
     # Nothing was published: this only changes the still.
     assert client.calls == []
+
+
+# Nothing tells this application when a video it published is deleted on
+# YouTube. Without a check the record outlives the video: a dead link on the
+# clip page, and a thumbnail sent against an id that addresses nothing.
+
+
+def test_a_video_deleted_on_youtube_takes_its_record_with_it(project_root):
+    project_dir = write_project(
+        project_root, [highlight(youtube_video_id="vid-1", youtube_url="https://youtu.be/vid-1")]
+    )
+    client = FakeYoutube()
+    client.exists = False
+
+    gone = uploader(project_dir).verify_publication(Project(PROJECT_ID), 0, client=client)
+
+    assert gone is False
+    stored = Project(PROJECT_ID).highlights[0]
+    # The clip reads as unpublished everywhere now, and can be published again
+    # as though for the first time.
+    assert stored.youtube_video_id is None
+    assert stored.youtube_url is None
+    assert stored.uploaded_at is None
+
+
+def test_a_video_that_is_still_there_is_left_alone(project_root):
+    project_dir = write_project(
+        project_root, [highlight(youtube_video_id="vid-1", youtube_url="https://youtu.be/vid-1")]
+    )
+    client = FakeYoutube()
+    client.exists = True
+
+    assert uploader(project_dir).verify_publication(Project(PROJECT_ID), 0, client=client) is True
+    assert Project(PROJECT_ID).highlights[0].youtube_video_id == "vid-1"
+
+
+def test_not_being_able_to_ask_is_not_a_no(project_root):
+    # No read scope, no network, a quota refusal. Clearing a good record on the
+    # strength of a question that could not be asked would lose the link to a
+    # video that is still there.
+    project_dir = write_project(
+        project_root, [highlight(youtube_video_id="vid-1", youtube_url="https://youtu.be/vid-1")]
+    )
+    client = FakeYoutube()
+    client.exists = None
+
+    assert uploader(project_dir).verify_publication(Project(PROJECT_ID), 0, client=client) is None
+    assert Project(PROJECT_ID).highlights[0].youtube_video_id == "vid-1"
+
+
+def test_a_thumbnail_is_not_sent_to_a_video_that_is_gone(project_root):
+    project_dir = write_project(
+        project_root, [highlight(youtube_video_id="vid-1", youtube_url="https://youtu.be/vid-1")]
+    )
+    write_thumbnail(project_dir)
+    client = FakeYoutube()
+    client.exists = False
+
+    with pytest.raises(ClipNotPublishedError) as failure:
+        uploader(
+            project_dir,
+            thumbnailer=FakeThumbnailer(project_dir),
+            thumbnail_retry_delays=(),
+            poll_limit=0,
+        ).upload_thumbnail(Project(PROJECT_ID), 0, client=client)
+
+    # The message has to say what to do about it, not just that it failed.
+    assert "no longer on YouTube" in str(failure.value)
+    assert "Upload the clip again" in str(failure.value)
+    # And nothing was sent.
+    assert client.thumbnails == []
 
 
 def test_a_clip_that_was_never_published_has_no_video_to_set_one_on(project_root):

@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 import googleapiclient.discovery
@@ -7,6 +8,8 @@ from google.auth.transport.requests import Request
 from typing import Dict, Any, Optional
 
 from backend.src.infrastructure.youtube_auth import stored_scopes
+
+logger = logging.getLogger(__name__)
 
 
 # Any of these lets `videos.list` be called for the channel's own uploads.
@@ -91,6 +94,28 @@ class YoutubeClient:
         if not items:
             return None
         return items[0].get("processingDetails", {}).get("processingStatus")
+
+    def video_exists(self, video_id: str) -> Optional[bool]:
+        """Whether this channel can still see the video behind an id.
+
+        False for one that has been deleted on YouTube — the case this
+        application cannot otherwise detect, because nothing tells it when a
+        video it published stops existing.
+
+        None when the token cannot answer: without the readonly scope the
+        question is a permission error rather than a "no", and treating those
+        the same would throw away a perfectly good record.
+        """
+        if not self.can_read_processing():
+            return None
+        try:
+            response = self.service.videos().list(part="id", id=video_id).execute()
+        except Exception:
+            # A network failure or a quota refusal is not evidence that the
+            # video is gone.
+            logger.warning(f"Could not check whether {video_id} still exists", exc_info=True)
+            return None
+        return bool(response.get("items"))
 
     def upload_video(self, file_path: str, title: str, description: str) -> Dict[str, Any]:
         body = {
