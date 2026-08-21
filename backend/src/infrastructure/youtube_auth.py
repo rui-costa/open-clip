@@ -27,6 +27,7 @@ from the browser at all.
 
 import json
 import logging
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -50,6 +51,7 @@ SCOPES = [
 ]
 DEFAULT_TOKEN_PATH = Path("backend/youtube_credentials/youtube_credentials.json")
 DEFAULT_CALLBACK_PORT = 8090
+CALLBACK_HOST = os.environ.get("OAUTH_CALLBACK_HOST", "localhost")
 
 
 class YoutubeAuthError(RuntimeError):
@@ -226,10 +228,10 @@ class YoutubeAuthSession:
         client, and the redirect URI is built from whatever this returns.
         """
         try:
-            return _CallbackServer(("localhost", self.preferred_port), _CallbackHandler)
+            return _CallbackServer((CALLBACK_HOST, self.preferred_port), _CallbackHandler)
         except OSError as e:
             logger.info(f"Port {self.preferred_port} is busy ({e}); taking another for this sign-in")
-            return _CallbackServer(("localhost", 0), _CallbackHandler)
+            return _CallbackServer((CALLBACK_HOST, 0), _CallbackHandler)
 
     def authorization_url(self) -> str:
         # `offline` plus `consent` is what makes Google return a refresh token:

@@ -22,21 +22,44 @@ Ensure you have [Docker](https://www.docker.com/) and [Docker Compose](https://d
    cd open-clip
    ```
 
-2. Create an `.env` file from the example:
+2. Optionally override the defaults (ports, torch build):
    ```bash
    cp .env.example .env
    ```
 
-3. Start the development environment:
+3. Build and start the stack:
    ```bash
-   docker-compose up --build
+   docker compose up --build
    ```
+   The first build is long: it installs ffmpeg, torch and the Whisper and YOLO
+   stacks. Later starts reuse the layers.
 
-4. [Learn how to use the application in our User Guide →](docs/USER_GUIDE.md)
-
-5. Access the services:
+4. Access the services:
    - **Frontend**: [http://localhost:5173](http://localhost:5173)
    - **Backend API**: [http://localhost:8000](http://localhost:8000)
+
+5. Add your Gemini API key on the app's Settings page. It is stored in
+   `backend/config/secrets.json`, which is mounted into the container, so it
+   survives a rebuild and is never baked into the image.
+
+6. [Learn how to use the application in our User Guide →](docs/USER_GUIDE.md)
+
+### What runs where
+
+| Path | Kept in | Why |
+| --- | --- | --- |
+| `./projects` | Bind mount | Project media and metadata, readable from the host. |
+| `./backend/config` | Bind mount | Settings and secrets, editable by hand. |
+| `backend-logs` | Named volume | Log files; the same lines also go to `docker compose logs`. |
+| `youtube-credentials` | Named volume | The OAuth token, written after a YouTube sign-in. |
+| `model-cache` | Named volume | Whisper and YOLO weights, so they download once. |
+
+Port `8090` is published as well as `8000`: it is the loopback address Google
+redirects to during a YouTube sign-in, and the flow cannot complete without it.
+
+The image installs the CPU build of torch. For an NVIDIA host, set
+`TORCH_INDEX_URL` in `.env` to a CUDA build and give the `backend` service a GPU
+reservation.
 
 ## Features
 
@@ -67,6 +90,17 @@ Navigate to the `frontend` directory. The project uses `playwright` for end to e
 ```bash
 npm install
 npm run test
+```
+
+### Containers
+`docker/smoke-test.sh` builds both images, starts the stack and checks that it
+works rather than merely that it built — the API and its media serving, the
+frontend's routing and baked-in API address, ffmpeg with libass, OpenCV, the
+YOLO weights, the caption fonts, the writability of every mount, and that no
+secrets reached the image. CI runs the same script.
+```bash
+./docker/smoke-test.sh              # build, test, stop the containers
+KEEP_UP=1 ./docker/smoke-test.sh    # leave the stack running afterwards
 ```
 
 ## Contributing

@@ -1,12 +1,53 @@
+# Version control and CI
+.git/
+.github/
+
+# Python
 .venv/
-.pytest_cache/
+venv/
 __pycache__/
 *.pyc
 *.pyo
-.git/
-.github/
-.vscode/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
 frontend/node_modules/
-output/
+frontend/dist/
+
+# Tests and their output
+backend/tests/
+frontend/tests/
+test-results/
+frontend/test-results/
+frontend/playwright-report/
+
+# Runtime state — mounted in, never baked in
 projects/
-tests/
+backend/logs/
+# Fetched into the image at a pinned version instead; see Dockerfile.backend.
+root/
+output/
+*.log
+
+# Secrets. `COPY backend/ ./backend/` would otherwise bake the Gemini key and
+# the YouTube OAuth token into the image.
+backend/config/secrets.json
+backend/youtube_credentials/
+
+# Editor, agent and docs cruft
+.DS_Store
+.vscode/
+.idea/
+.claude/
+.cursor/
+.gemini/
+.windsurf/
+.opencode/
+.clinerules/
+graft/
+docs/
+images/
+/*.md

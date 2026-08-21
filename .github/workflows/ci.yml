@@ -43,11 +43,32 @@ jobs:
           cd frontend
           npm test
 
-  docker-build:
+  # Builds both images and then runs the stack, because building is the part
+  # that has never been what breaks: the images that shipped a Python too old
+  # for the app's annotations, an OpenCV with no libGL, and a caption font
+  # resolving to a monospace face all built without complaint.
+  test-docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Build Backend Docker Image
-        run: docker build -f Dockerfile.backend -t backend:test .
-      - name: Build Frontend Docker Image
-        run: docker build -f Dockerfile.frontend -t frontend:test .
+
+      - name: Match the container user to the checkout
+        # The backend bind-mounts ./projects and ./backend/config and writes to
+        # both. The image defaults to uid 1000; the runner's checkout is owned
+        # by uid 1001, so without this the writes are denied.
+        run: |
+          echo "APP_UID=$(id -u)" >> "$GITHUB_ENV"
+          echo "APP_GID=$(id -g)" >> "$GITHUB_ENV"
+
+      - name: Build and smoke-test the stack
+        env:
+          # Safe here and only here: the named volumes hold a YouTube token and
+          # cached model weights on a real machine, so the script keeps them by
+          # default.
+          DOWN_VOLUMES: 1
+        run: ./docker/smoke-test.sh
+
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color --tail 300

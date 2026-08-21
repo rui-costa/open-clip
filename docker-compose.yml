@@ -1,34 +1,64 @@
-version: '3.8'
-
 services:
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
+      args:
+        # CPU-only torch by default; see Dockerfile.backend.
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+        # The uid the container writes the bind-mounted checkout as. Override on
+        # a Linux host or CI runner where the checkout is not owned by 1000.
+        APP_UID: ${APP_UID:-1000}
+        APP_GID: ${APP_GID:-1000}
+    image: open-clip-backend
     container_name: open-clip-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
-    volumes:
-      - ./projects:/app/projects
+      - "${BACKEND_PORT:-8000}:8000"
+      # The YouTube consent callback. Google redirects the browser to
+      # http://localhost:8090/, so the host port has to be 8090 exactly.
+      - "8090:8090"
     environment:
-      - ENV=production
+      # A callback bound to the container's loopback is unreachable through a
+      # published port, so in a container it has to listen on all interfaces.
+      OAUTH_CALLBACK_HOST: "0.0.0.0"
+    volumes:
+      # Project media and metadata.
+      - ./projects:/app/projects
+      # Settings and API keys, written by the Settings page. Bind-mounted so
+      # they survive a rebuild and stay out of the image.
+      - ./backend/config:/app/backend/config
+      - backend-logs:/app/backend/logs
+      - youtube-credentials:/app/backend/youtube_credentials
+      # Whisper and YOLO weights, downloaded on first use. Without this every
+      # fresh container re-downloads several hundred MB.
+      - model-cache:/home/app/.cache
     networks:
       - app-network
-    command: ["python", "-m", "backend.api"]
 
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
+      args:
+        # Baked into the bundle: the browser calls this, so it is the address
+        # the backend is published on, not the service name.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:${BACKEND_PORT:-8000}}
+    image: open-clip-frontend
     container_name: open-clip-frontend
     restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "${FRONTEND_PORT:-5173}:80"
     networks:
       - app-network
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+
+volumes:
+  backend-logs:
+  youtube-credentials:
+  model-cache:
 
 networks:
   app-network:

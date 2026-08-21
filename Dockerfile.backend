@@ -1,20 +1,95 @@
-# Backend Dockerfile
-FROM python:3.12-slim
+# Backend image: the API, the pipeline, and everything the pipeline shells out to.
+#
+# 3.14 is a floor, not a preference: backend/src/dataclasses/data.py annotates
+# fields with classes defined further down the file, which only resolves under
+# PEP 649's lazy annotations. On 3.13 or older the import dies with
+# "NameError: name 'CaptionSettings' is not defined". Keep this in step with
+# the version CI tests on.
+FROM python:3.14-slim
+
+# Where torch and torchvision come from. The default is the CPU-only build:
+# the wheels on PyPI pull ~2.5GB of CUDA libraries that are dead weight on a
+# machine without an NVIDIA GPU, and unusable in a container started without
+# one. Override at build time for a CUDA host, e.g.
+#   docker compose build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    libsm6 \
-    libxext6 \
+# ffmpeg renders every clip, thumbnail and burnt-in caption.
+# libgl1/libglib2.0-0/libsm6/libxext6 are what `import cv2` needs; without
+# libgl1 the import itself fails with "libGL.so.1: cannot open shared object file".
+# fontconfig is how the caption renderer resolves a font family to a file
+# (backend/src/infrastructure/font_metrics.py shells out to fc-match), and
+# fonts-liberation gives it something to resolve to — Liberation Sans is what
+# fontconfig substitutes for the Arial the shipped caption styles ask for.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libgl1 \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        fontconfig \
+        fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
+# Maps the Arial Black the caption styles ask for onto a face that exists here.
+COPY docker/fonts-aliases.conf /etc/fonts/conf.d/99-open-clip-aliases.conf
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --index-url "${TORCH_INDEX_URL}" torch torchvision \
+    && pip install --no-cache-dir -r requirements.txt
+
+# The person-detection weights the clipper and thumbnailer frame with. They are
+# not in the repo (see .gitignore), and `YOLO("root/yolov8n.pt")` cannot fetch
+# them into a directory that does not exist, so they are baked in at a pinned
+# version rather than downloaded on first clip.
+ARG YOLO_WEIGHTS_URL=https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
+ADD ${YOLO_WEIGHTS_URL} /app/root/yolov8n.pt
 
 COPY backend/ ./backend/
-# Ensure the root is in python path
-ENV PYTHONPATH=/app
+
+# Ultralytics writes a settings file on first use, into an `Ultralytics`
+# directory it appends to this path. Pointed at somewhere the non-root user
+# owns, so it does not warn and fall back to /tmp on every run.
+ENV YOLO_CONFIG_DIR=/home/app/.config
+
+# Who the container writes as. It has to be the owner of the checkout, because
+# `projects/` and `backend/config/` are bind-mounted from it and the app writes
+# to both: a mismatch is a permission error on the first save, not a warning.
+# 1000 is the first human user on most Linux hosts, and Docker Desktop remaps
+# ownership on macOS and Windows so the value is ignored there. Anywhere else —
+# a CI runner, a second account on the box — build with
+#   docker compose build --build-arg APP_UID=$(id -u) --build-arg APP_GID=$(id -g)
+# or set APP_UID/APP_GID in .env.
+#
+# This is a build arg rather than compose's `user:` on purpose: the named
+# volumes take their ownership from these directories as the image leaves them,
+# so overriding the user only at run time would leave the caches unwritable.
+ARG APP_UID=1000
+ARG APP_GID=1000
+
+# Runtime state lives on volumes; these are the mount points, created here so
+# they exist and are writable when nothing is mounted over them.
+RUN groupadd -f -g ${APP_GID} app \
+    && useradd --create-home --uid ${APP_UID} --gid ${APP_GID} app \
+    && mkdir -p /app/projects /app/backend/logs /app/backend/youtube_credentials \
+               /home/app/.cache /home/app/.config/Ultralytics \
+    && chmod 0644 /app/root/yolov8n.pt \
+    && chown -R ${APP_UID}:${APP_GID} /app /home/app
+
+USER ${APP_UID}:${APP_GID}
+
+EXPOSE 8000
+# The OAuth consent callback. Only listens while a YouTube sign-in is in flight.
+EXPOSE 8090
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"
 
 CMD ["python", "-m", "backend.api"]
