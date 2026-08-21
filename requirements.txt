@@ -5,3 +5,4 @@ torchvision
 ultralytics
 opencv-python
 google-api-python-client
+google-auth-oauthlib
