@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from backend.src.dataclasses.data import Project
+from backend.src.infrastructure.progress import reporting_to
 
 from backend.src.services.transcriber import Transcriber
 from backend.src.services.llm_query import LLMQuery
@@ -35,6 +36,11 @@ class PipelineOrchestrator:
         self.pipeline_config = self._load_pipeline_config()
         self.active_project_orchestrators: Dict[str, threading.Thread] = {}
         self.active_processes = active_processes if active_processes is not None else {}
+        # The last thing each running step said about itself, keyed the same
+        # way `active_processes` is. Kept beside that dict rather than in the
+        # project file: it describes this attempt, not the project, and it is
+        # worthless the moment the step ends.
+        self.step_notes: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
 
         # Injectable services. Every discovered prompt contributes its own
@@ -103,6 +109,49 @@ class PipelineOrchestrator:
     def _unregister_process(self, key: str):
         with self._lock:
             self.active_processes.pop(key, None)
+            # A note about a step that has stopped is a note about the past.
+            self.step_notes.pop(key, None)
+
+    def _note_progress(self, key: str, message: str):
+        """Records what the step behind `key` is doing now."""
+        with self._lock:
+            # Only for a step that is still registered: a report arriving as
+            # the step ends must not resurrect an entry `_unregister_process`
+            # has already dropped.
+            if key not in self.active_processes:
+                return
+            self.step_notes[key] = {"message": message, "at": time.time()}
+
+    def activity(self, project_id: str) -> Dict[str, Dict[str, Any]]:
+        """What each of this project's running steps is doing, by step name.
+
+        `since` is when the step was triggered, which is the number the page
+        turns into "running for six minutes" — the single most useful thing to
+        show about a step that has said nothing else yet.
+        """
+        prefix = f"{project_id}_"
+        with self._lock:
+            running = {
+                key[len(prefix):]: started
+                for key, started in self.active_processes.items()
+                if key.startswith(prefix)
+            }
+            notes = dict(self.step_notes)
+
+        steps = self.pipeline_config.get("steps", {})
+        activity: Dict[str, Dict[str, Any]] = {}
+        for step_name, started in running.items():
+            # The per-clip jobs (`<id>_clip_3`, `<id>_upload_clip_3`) and the
+            # pipeline's own key are registered here too and are not steps.
+            if step_name not in steps:
+                continue
+            entry: Dict[str, Any] = {"since": started}
+            note = notes.get(f"{prefix}{step_name}")
+            if note:
+                entry["message"] = note["message"]
+                entry["at"] = note["at"]
+            activity[step_name] = entry
+        return activity
 
     def _has_running_step(self, project_id: str) -> bool:
         prefix = f"{project_id}_"
@@ -171,7 +220,11 @@ class PipelineOrchestrator:
 
         def runner():
             try:
-                self._exec_service(project, step_name)
+                # Everything this step reports on this thread lands on the
+                # step's own entry, which is what /execution_status hands to
+                # the page while the step runs.
+                with reporting_to(lambda message: self._note_progress(key, message)):
+                    self._exec_service(project, step_name)
             except Exception:
                 logger.exception(f"Step {step_name} failed for project {project_id}")
             finally:

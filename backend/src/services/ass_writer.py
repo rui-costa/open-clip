@@ -12,7 +12,8 @@ libass versions.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+import re
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from backend.src.dataclasses.data import OverlayText
 from backend.src.infrastructure.font_metrics import face_for_style, resolve_face
@@ -130,6 +131,9 @@ def build_overlay_style_line(overlay: OverlayText, width: int, height: int,
     face = resolve_face(overlay.font_family, overlay.bold, overlay.italic)
     font_size = max(1, int(round(em * face.height_ratio)))
     outline = round(height * overlay.outline_pct / 100 / 2, 1)
+    # Not halved, unlike the outline: an ASS Shadow is an offset in pixels and
+    # so is the preview's `text-shadow`, so the two already mean the same thing.
+    shadow = round(height * overlay.shadow_pct / 100, 1)
 
     side_margin = int(round(width * (100 - overlay.max_width_pct) / 200))
     top_margin = max(0, int(round(height * overlay.position_pct / 100)))
@@ -147,19 +151,50 @@ def build_overlay_style_line(overlay: OverlayText, width: int, height: int,
         f"{ass_color(overlay.text_color, force_opaque=True)},"
         f"{ass_color(overlay.text_color, force_opaque=True)},"
         f"{outline_color},"
-        f"{ass_color('#000000')},"
+        f"{ass_color(overlay.shadow_color)},"
         f"{-1 if overlay.bold else 0},{-1 if overlay.italic else 0},0,0,"
-        f"100,100,0,0,{border_style},{outline},0,8,"
+        f"100,100,0,0,{border_style},{outline},{shadow},8,"
         f"{side_margin},{side_margin},{top_margin},1"
     )
 
 
+# `*like this*`, the way it is written everywhere else. Deliberately not a
+# second field on the title: the marked word has to move when the words around
+# it are rewritten, and a field holding "word 3" does not.
+_HIGHLIGHT = re.compile(r"\*([^*\n]+)\*")
+
+
+def split_highlights(line: str) -> List[Tuple[str, bool]]:
+    """One line as (text, is_marked) runs, with the asterisks taken out.
+
+    An asterisk with no partner is not a mark and stays in the text as one: a
+    title can legitimately contain one, and eating it would be a title the user
+    did not write.
+    """
+    parts = _HIGHLIGHT.split(line)
+    # `re.split` on one capturing group alternates: plain, marked, plain, ...
+    return [(part, index % 2 == 1) for index, part in enumerate(parts) if part]
+
+
 def overlay_body(overlay: OverlayText) -> str:
     """The title's text as libass will read it, line breaks and case included."""
+    highlight = ass_color(overlay.highlight_color, force_opaque=True)
+    # Closed by naming the colour again rather than with `\r`: a reset would
+    # also drop the event's other overrides, and the fade is one of them.
+    plain = ass_color(overlay.text_color, force_opaque=True)
+
+    lines = []
+    for line in overlay.text.strip().splitlines():
+        rendered = []
+        for run, marked in split_highlights(line):
+            body = escape_text(run)
+            if overlay.uppercase:
+                body = body.upper()
+            rendered.append(f"{{\\c{highlight}&}}{body}{{\\c{plain}&}}" if marked else body)
+        lines.append("".join(rendered))
     # A typed line break is kept as one: `\N` is libass's hard break, and the
     # preview draws the same text in a block that honours newlines.
-    body = "\\N".join(escape_text(line) for line in overlay.text.strip().splitlines())
-    return body.upper() if overlay.uppercase else body
+    return "\\N".join(lines)
 
 
 def build_overlay_event(overlay: OverlayText) -> Optional[str]:

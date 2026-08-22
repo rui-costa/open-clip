@@ -12,6 +12,7 @@ clip, no subtitles, and the clip's title over it. Everything in
 
 import logging
 import tempfile
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -43,39 +44,54 @@ class Thumbnailer:
         stored = getattr(highlight, "thumbnail", None)
         return stored if stored is not None else ThumbnailSettings()
 
-    def title(self, highlight: Highlight) -> Optional[OverlayText]:
+    def title(self, project: Optional[Project], highlight: Highlight) -> Optional[OverlayText]:
         """The text drawn over the still, worked out rather than asked for.
 
-        The clip's own title first: a clip whose opening frames say one thing
-        must not have a thumbnail saying another. Failing that, the hook the
-        model wrote for this moment, then the YouTube title — a thumbnail with
-        no words on it is the one outcome worth avoiding.
+        The clip's own title first, if it has one: a user who typed a line has
+        said what it should say, and a thumbnail is not the place to argue.
+
+        Failing that, `thumbnail_text` — the line the model wrote for this job
+        specifically: a handful of words, one of them marked, meant to be read
+        at the size a feed gives a still. Then the hook, which was written to be
+        heard over a video that is already playing and only stands in here, and
+        then the YouTube title. A thumbnail with no words on it is the one
+        outcome worth avoiding.
+
+        Whichever line wins, it is drawn in the project's overlay configuration
+        — its font, size, placement and colours. That is what makes the project
+        setting worth having: a project's stills look like one project without
+        anybody typing a title on any of them. Only the words are decided here.
 
         The stored title is used even when it is switched off for the video.
         `enabled` there answers "burn this into the clip"; whether the
         thumbnail carries text is `show_overlay`'s question, and a user who
         wrote a line and chose not to burn it still wrote the line.
         """
-        stored = getattr(highlight, "overlay", None)
+        stored = self.captions.overlay_settings(project, highlight)
         if stored is not None and stored.text.strip():
             return stored
 
         text = (
-            highlight.viral_hook_text
+            getattr(highlight, "thumbnail_text", "")
+            or highlight.viral_hook_text
             or highlight.video_title_for_youtube_short
             or ""
         ).strip()
         if not text:
             return None
-        # A fresh OverlayText, so an automatic title looks like the default a
-        # user would have got had they typed it themselves.
-        return OverlayText(enabled=True, text=text[:200])
+        # The project's look with the model's words in it. Built by replacing
+        # the text rather than by constructing a fresh OverlayText: a default
+        # one ignored every choice made on the project, so a restyled project
+        # kept drawing its automatic titles in the factory colours.
+        base = stored if stored is not None else OverlayText()
+        return replace(base, enabled=True, text=text[:200])
 
-    def overlays(self, highlight: Highlight, settings: ThumbnailSettings) -> List[OverlayText]:
+    def overlays(self, project: Optional[Project], highlight: Highlight,
+                 settings: ThumbnailSettings) -> List[OverlayText]:
         """Everything with words in it, bottom layer first."""
         drawn: List[OverlayText] = []
         if settings.show_overlay:
-            title = self.title(highlight)
+            title = self.title(project, highlight)
             if title is not None:
                 drawn.append(title)
         # The extra line is the user's alone and has no `enabled` to consult:
@@ -119,7 +135,7 @@ class Thumbnailer:
         A caption failure costs the text, not the picture: a thumbnail of the
         frame alone is still a thumbnail, so this degrades rather than raising.
         """
-        overlays = self.overlays(highlight, settings)
+        overlays = self.overlays(project, highlight, settings)
         cues: List[Any] = []
         if settings.show_captions:
             try:
@@ -211,7 +227,7 @@ class Thumbnailer:
         for itself which of the model's fields would have been used.
         """
         settings = self.settings(highlight)
-        title = self.title(highlight)
+        title = self.title(project, highlight)
         return {
             "settings": settings.to_dict(),
             # Named `title` rather than `overlay`: this is the resolved text,

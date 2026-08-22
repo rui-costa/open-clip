@@ -14,6 +14,8 @@ from tenacity import (
 from tenacity.wait import wait_base
 import httpx
 
+from backend.src.infrastructure.progress import report
+
 # Attempting safe imports
 try:
     import google
@@ -44,6 +46,28 @@ def describe_error(exception: BaseException) -> str:
     message = getattr(exception, "message", None) or str(exception)
     parts = [p for p in (f"HTTP {code}" if code else None, status, message) if p]
     return f"{type(exception).__name__}: " + " | ".join(parts)
+
+
+def plain_reason(exception: BaseException) -> str:
+    """The same error as `describe_error`, in the words a person needs.
+
+    What reaches the page is read by someone deciding whether to keep waiting,
+    and "ServerError: HTTP 503 | UNAVAILABLE | This model is currently
+    experiencing high demand" is a log line, not an answer to that question.
+    """
+    if isinstance(exception, RetryError) and exception.last_attempt.failed:
+        return plain_reason(exception.last_attempt.exception())
+    if isinstance(exception, (httpx.ReadTimeout, httpx.ReadError, httpx.ConnectError)):
+        return "the connection to Google failed"
+    reasons = {
+        404: "this key cannot reach that model",
+        429: "this key is out of quota for it",
+        500: "Google returned a server error",
+        502: "Google returned a bad gateway",
+        503: "Google says the model is overloaded",
+        504: "Google timed out",
+    }
+    return reasons.get(_status_code(exception)) or describe_error(exception)
 
 
 def _status_code(exception: BaseException) -> Optional[int]:
@@ -178,10 +202,24 @@ class GeminiClient:
         return getattr(response, "text", str(response))
 
     def _generate_with_retry(self, model: str, prompt: str, is_json: bool) -> str:
+        def before(retry_state):
+            # Said before the request rather than after it, because the wait is
+            # the part with nothing to show: this is a single HTTP call that can
+            # take minutes, and until it returns this sentence is all there is.
+            attempt = retry_state.attempt_number
+            counted = f" (attempt {attempt} of {MAX_ATTEMPTS_PER_MODEL})" if attempt > 1 else ""
+            report(f"Waiting for {model} to answer{counted}.")
+
         def before_sleep(retry_state):
+            exception = retry_state.outcome.exception()
             logger.warning(
                 f"{model}: retryable error (attempt {retry_state.attempt_number}), retrying in "
-                f"{retry_state.next_action.sleep:.1f}s: {describe_error(retry_state.outcome.exception())}"
+                f"{retry_state.next_action.sleep:.1f}s: {describe_error(exception)}"
+            )
+            report(
+                f"{model}: {plain_reason(exception)}. Trying again in "
+                f"{retry_state.next_action.sleep:.0f}s — attempt "
+                f"{retry_state.attempt_number + 1} of {MAX_ATTEMPTS_PER_MODEL}."
             )
 
         retryer = Retrying(
@@ -192,6 +230,7 @@ class GeminiClient:
             ),
             retry=retry_if_exception(_is_retryable),
             reraise=True,
+            before=before,
             before_sleep=before_sleep,
         )
         return retryer(self._generate_once, model, prompt, is_json)
@@ -211,6 +250,10 @@ class GeminiClient:
                     logger.warning(
                         f"Model {model} unavailable ({describe_error(e)}); "
                         f"falling back to {remaining[0]}"
+                    )
+                    report(
+                        f"Gave up on {model} — {plain_reason(e)}. "
+                        f"Trying {remaining[0]} instead."
                     )
                     continue
                 raise

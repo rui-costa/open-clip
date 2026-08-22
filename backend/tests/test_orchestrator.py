@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.src.infrastructure.progress import report
 from backend.src.orchestrator import PipelineOrchestrator
 
 PIPELINE_CONFIG = Path(__file__).resolve().parents[1] / "config" / "pipeline.json"
@@ -68,6 +69,62 @@ def test_run_step_registers_process_before_returning(project_root):
     service.release.set()
     orchestrator.active_project_orchestrators[PROJECT_ID].join(timeout=5)
     assert orchestrator.active_processes == {}
+
+
+# A step that says "running" for six minutes and nothing else is
+# indistinguishable from one that has hung. These cover the channel that
+# carries the difference to the page.
+def test_a_running_step_reports_how_long_it_has_been_going(project_root):
+    service = BlockingService()
+    orchestrator = make_orchestrator({"clipper": service})
+
+    orchestrator.run_step(PROJECT_ID, "clipper")
+    assert service.started.wait(timeout=5)
+
+    activity = orchestrator.activity(PROJECT_ID)
+    # Present before anything has been reported: the elapsed time is already
+    # more than "running" said.
+    assert "since" in activity["clipper"]
+    assert "message" not in activity["clipper"]
+
+    service.release.set()
+    orchestrator.active_project_orchestrators[PROJECT_ID].join(timeout=5)
+
+
+def test_what_a_step_reports_reaches_the_page(project_root):
+    class TalkingService:
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def execute(self, project):
+            report("Waiting for model-a to answer.")
+            self.started.set()
+            self.release.wait(timeout=5)
+
+    service = TalkingService()
+    orchestrator = make_orchestrator({"clipper": service})
+
+    orchestrator.run_step(PROJECT_ID, "clipper")
+    assert service.started.wait(timeout=5)
+
+    assert orchestrator.activity(PROJECT_ID)["clipper"]["message"] == "Waiting for model-a to answer."
+
+    service.release.set()
+    orchestrator.active_project_orchestrators[PROJECT_ID].join(timeout=5)
+    # A note about a step that has stopped is a note about the past.
+    assert orchestrator.activity(PROJECT_ID) == {}
+    assert orchestrator.step_notes == {}
+
+
+def test_per_clip_jobs_are_not_reported_as_steps(project_root):
+    orchestrator = make_orchestrator({})
+    orchestrator._register_process(f"{PROJECT_ID}_clip_3")
+    orchestrator._register_process(f"{PROJECT_ID}_pipeline")
+
+    # Both are registered processes; neither is a step, and reading their
+    # trailing segment as one is what put entries like "3" into this payload.
+    assert orchestrator.activity(PROJECT_ID) == {}
 
 
 def test_run_step_clears_process_when_service_raises(project_root):

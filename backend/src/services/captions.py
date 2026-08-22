@@ -79,30 +79,57 @@ class CaptionService:
             "url": f"/caption_font?{query}" if face.path else None,
         }
 
-    def overlay(self, highlight) -> Optional[Any]:
-        """The clip's overlay title, or None when it would draw nothing.
+    def overlay_locked(self, highlight) -> bool:
+        """Whether this clip follows the project's title rather than its own."""
+        return getattr(highlight, "overlay", None) is None
+
+    def overlay_settings(self, project, highlight=None) -> Optional[Any]:
+        """The title that governs one clip: its own, or the project's look.
+
+        The same lock the caption settings keep, for the same reason: the look
+        of a title is a project decision — one font, one placement, one pair of
+        colours across every short — while the words on any one clip are not.
+        A highlight carrying its own `overlay` has unlocked and speaks for
+        itself; one carrying None defers to the project's configuration, which
+        holds no text, so it draws nothing over the video until a line is
+        written for it. The thumbnail is the exception: it has the model's line
+        to fall back on, and draws it in exactly this configuration.
+        """
+        own = getattr(highlight, "overlay", None) if highlight is not None else None
+        if own is not None:
+            return own
+        return getattr(project.settings, "overlay", None) if project is not None else None
+
+    def overlay(self, project, highlight=None) -> Optional[Any]:
+        """The title drawn over this clip, or None when it would draw nothing.
 
         Kept here rather than in the clipper because this is the object that
         already answers "what gets drawn over this clip" for both renderers.
         """
-        overlay = getattr(highlight, "overlay", None)
+        overlay = self.overlay_settings(project, highlight)
         return overlay if overlay is not None and overlay.is_visible() else None
 
     def preview(self, project, highlight) -> Dict[str, Any]:
         """The payload the browser preview overlay renders from."""
         style = self.style(project, highlight)
         cues = self.cues(project, highlight, style)
-        # The face for the title is resolved the same way the caption face is,
-        # so the preview draws with the file libass will draw with.
-        stored_overlay = getattr(highlight, "overlay", None)
+        # Resolved, not stored: a clip that has never been given a title of its
+        # own still reports the project's configuration, so the editor opens on
+        # the look it would inherit rather than on an empty form. The face is
+        # resolved the same way the caption face is, so the preview draws with
+        # the file libass will.
+        resolved_overlay = self.overlay_settings(project, highlight)
         overlay_font = self.font({
-            "font_family": stored_overlay.font_family,
-            "bold": stored_overlay.bold,
-            "italic": stored_overlay.italic,
-        }) if stored_overlay is not None else None
+            "font_family": resolved_overlay.font_family,
+            "bold": resolved_overlay.bold,
+            "italic": resolved_overlay.italic,
+        }) if resolved_overlay is not None else None
         return {
-            "overlay": stored_overlay.to_dict() if stored_overlay is not None else None,
+            "overlay": resolved_overlay.to_dict() if resolved_overlay is not None else None,
             "overlay_font": overlay_font,
+            # Whether the title above is this clip's own or the project's, so
+            # the editor can show the lock without a second request.
+            "overlay_locked": self.overlay_locked(highlight),
             "enabled": self.is_enabled(project, highlight),
             "style": style,
             "font": self.font(style),
@@ -132,7 +159,7 @@ class CaptionService:
         """
         style = self.style(project, highlight)
         cues = self.cues(project, highlight, style) if self.is_enabled(project, highlight) else []
-        overlay = self.overlay(highlight)
+        overlay = self.overlay(project, highlight)
         if not cues and overlay is None:
             return None
         path.parent.mkdir(parents=True, exist_ok=True)

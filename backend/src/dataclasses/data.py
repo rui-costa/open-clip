@@ -161,13 +161,36 @@ class OverlayText:
     fade_in: float = 0.0
     fade_out: float = 0.6
     font_family: str = "Arial Black"
+    # Thumbnail guidance says as large as possible, and the frame says how
+    # large that is: libass wraps at spaces but cannot break a word, so a title
+    # sized past what its longest word can fit is a word cut off at the frame
+    # edge. Eight percent of a 1080x1920 short holds about eight uppercase
+    # characters a line in Arial Black, which most hooks clear. Anything longer
+    # is a size decision on that clip, and the editor says when one is due.
     font_size_pct: float = 8.0
     bold: bool = True
     italic: bool = False
     uppercase: bool = True
     text_color: str = "#FFFFFF"
     outline_color: str = "#000000"
-    outline_pct: float = 0.6
+    # Toward the heavy end of the 4-8px advised for a 720-high still, because a
+    # video frame is the busy background the same guidance says to go heavier
+    # on: whatever is behind these words is moving footage, never a flat colour.
+    outline_pct: float = 0.9
+    # A hard offset shadow, drawn down and right with no blur, the way the
+    # caption style's is. It is what makes a title read as sitting *over* the
+    # picture rather than printed onto it — and, unlike a fade or a scale-up,
+    # it is still there in one frame. That matters because this same object is
+    # drawn on the thumbnail, which is a single frame and has no motion to
+    # show: any pop that depends on time is a pop the thumbnail never gets.
+    shadow_color: str = "#000000"
+    shadow_pct: float = 0.8
+    # One word in a second colour is what a thumbnail that gets clicked does:
+    # the eye lands on the marked word and reads out from it. The user marks it
+    # by wrapping it in asterisks, so the mark lives in the text they already
+    # type rather than in a second field they have to keep in step with it. A
+    # title with no asterisks in it is drawn exactly as before.
+    highlight_color: str = "#FFE000"
     box_color: Optional[str] = None
     # Distance from the *top* of the frame to the top of the text. Captions
     # measure from the bottom because that is where captions live; a title is
@@ -208,6 +231,9 @@ class OverlayText:
             text_color=_hex_color(data.get("text_color"), defaults.text_color) or defaults.text_color,
             outline_color=_hex_color(data.get("outline_color"), defaults.outline_color) or defaults.outline_color,
             outline_pct=_bounded(data.get("outline_pct", defaults.outline_pct), 0.0, 3.0, defaults.outline_pct),
+            shadow_color=_hex_color(data.get("shadow_color"), defaults.shadow_color) or defaults.shadow_color,
+            shadow_pct=_bounded(data.get("shadow_pct", defaults.shadow_pct), 0.0, 3.0, defaults.shadow_pct),
+            highlight_color=_hex_color(data.get("highlight_color"), defaults.highlight_color) or defaults.highlight_color,
             box_color=_hex_color(data.get("box_color"), defaults.box_color),
             position_pct=_bounded(data.get("position_pct", defaults.position_pct), 0.0, 100.0, defaults.position_pct),
             max_width_pct=_bounded(data.get("max_width_pct", defaults.max_width_pct), 10.0, 100.0, defaults.max_width_pct),
@@ -280,6 +306,15 @@ class Highlight:
     # edit. Defaulted because it sits after `start`/`end` and because every
     # highlight produced before this field existed simply has none.
     video_description_for_youtube_short: str = ""
+    # The words for the still image, which is the thing anyone decides to click
+    # on. Separate from `viral_hook_text` because the two are read under
+    # different conditions: the hook is laid over the opening seconds of a video
+    # that is already playing, while this is read at about 120 pixels wide in a
+    # feed, with no sound and no context. That makes it shorter, blunter, and
+    # carrying one word marked with asterisks for the renderer to colour.
+    # Defaulted because every highlight produced before this field existed has
+    # none, and the thumbnail falls back to the hook for those.
+    thumbnail_text: str = ""
     is_clip_generated: bool = False
     generated_clip_filename: Optional[str] = None
     # What a YouTube upload of this clip produced, or None while it has never
@@ -346,6 +381,7 @@ class Highlight:
             video_description_for_linkedin=data.get("video_description_for_linkedin", ""),
             video_title_for_youtube_short=data.get("video_title_for_youtube_short", ""),
             video_description_for_youtube_short=data.get("video_description_for_youtube_short", ""),
+            thumbnail_text=data.get("thumbnail_text", ""),
             start=_as_seconds(data.get("start")),
             end=_as_seconds(data.get("end")),
             is_clip_generated=data.get("is_clip_generated", False),
@@ -518,6 +554,16 @@ class ProjectSettings:
     aspect_ratio: str
     resolution: str
     captions: CaptionSettings = field(default_factory=CaptionSettings)
+    # How a title is drawn across this project — font, size, placement,
+    # colours, timing — and nothing about what it says. The words belong to the
+    # clip: they are the one thing about a title that cannot be the same on
+    # every short, whether the user typed them or the model wrote them. `text`
+    # is carried only because this is an `OverlayText` and is held empty.
+    #
+    # Default-constructed rather than optional, so a project always has a look
+    # to draw with; switched off, so a project nobody has touched burns nothing
+    # into its clips.
+    overlay: OverlayText = field(default_factory=OverlayText)
     description: DescriptionSettings = field(default_factory=DescriptionSettings)
     # Thumbnail by default: a grid of stills is what the shorts will look like
     # in a feed, which is the question being asked while reviewing them. The
@@ -539,6 +585,10 @@ class ProjectSettings:
             aspect_ratio=data.get("aspect_ratio", "keep original"),
             resolution=data.get("resolution", "keep original"),
             captions=CaptionSettings.from_dict(data.get("captions")),
+            # Text stripped on the way in as well as on the way out: a project
+            # saved before this was configuration-only carries a line that
+            # would otherwise reappear over every clip at once.
+            overlay=OverlayText.from_dict({**(data.get("overlay") or {}), "text": ""}),
             description=DescriptionSettings.from_dict(data.get("description")),
             # Anything else — a typo, a value from a later version — reads as
             # the default rather than reaching the page as a state it cannot

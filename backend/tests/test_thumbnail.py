@@ -29,11 +29,13 @@ WORD_MAP = "\n".join([
 
 
 def write_project(root: Path, overlay=None, thumbnail=None, hook="The moment it turned",
-                  captions_enabled=False, with_source=True):
+                  captions_enabled=False, with_source=True, thumbnail_text="",
+                  project_overlay=None):
     project_dir = root / "projects" / PROJECT_ID
     project_dir.mkdir(parents=True, exist_ok=True)
     highlight = {
         "highlight_text": "And we just lost", "viral_hook_text": hook,
+        "thumbnail_text": thumbnail_text,
         "video_description_for_x": "", "video_description_for_reddit": "",
         "video_description_for_linkedin": "", "video_title_for_youtube_short": "A title",
         "start": 10.0, "end": 14.0,
@@ -52,6 +54,7 @@ def write_project(root: Path, overlay=None, thumbnail=None, hook="The moment it 
         "settings": {
             "aspect_ratio": "9:16", "resolution": "1080p",
             "captions": {"enabled": captions_enabled, "preset": "karaoke_pop", "overrides": {}},
+            **({"overlay": project_overlay} if project_overlay is not None else {}),
         },
         "status": None,
         "step_statuses": {},
@@ -106,19 +109,42 @@ class TestDefaults:
         assert settings.frame_time == 0.0
         assert settings.show_captions is False
         assert settings.show_overlay is True
-        assert [overlay.text for overlay in thumbnailer.overlays(highlight, settings)] == ["Cold open"]
+        assert [overlay.text for overlay in thumbnailer.overlays(project, highlight, settings)] == ["Cold open"]
 
     def test_the_title_is_automatic_when_the_clip_has_none_of_its_own(self, project_root):
         write_project(project_root, overlay=None, hook="This is the hook")
         highlight = Project(PROJECT_ID).highlights[0]
 
-        assert Thumbnailer().title(highlight).text == "This is the hook"
+        assert Thumbnailer().title(Project(PROJECT_ID), highlight).text == "This is the hook"
+
+    # The hook is written to be heard over a video already playing. The
+    # thumbnail line is written to be read at feed size with no sound, which is
+    # a different sentence, so it wins wherever the model wrote one.
+    def test_the_model_s_thumbnail_line_beats_the_hook(self, project_root):
+        write_project(project_root, overlay=None, hook="This is the hook",
+                      thumbnail_text="we *lost* it")
+        highlight = Project(PROJECT_ID).highlights[0]
+
+        assert Thumbnailer().title(Project(PROJECT_ID), highlight).text == "we *lost* it"
+
+    def test_a_title_the_user_typed_still_beats_the_model_s(self, project_root):
+        write_project(project_root, overlay={"enabled": True, "text": "Cold open"},
+                      thumbnail_text="we *lost* it")
+        highlight = Project(PROJECT_ID).highlights[0]
+
+        assert Thumbnailer().title(Project(PROJECT_ID), highlight).text == "Cold open"
+
+    def test_the_hook_stands_in_for_a_clip_written_before_the_field_existed(self, project_root):
+        write_project(project_root, overlay=None, hook="This is the hook", thumbnail_text="")
+        highlight = Project(PROJECT_ID).highlights[0]
+
+        assert Thumbnailer().title(Project(PROJECT_ID), highlight).text == "This is the hook"
 
     def test_the_youtube_title_stands_in_when_there_is_no_hook(self, project_root):
         write_project(project_root, overlay=None, hook="")
         highlight = Project(PROJECT_ID).highlights[0]
 
-        assert Thumbnailer().title(highlight).text == "A title"
+        assert Thumbnailer().title(Project(PROJECT_ID), highlight).text == "A title"
 
     def test_a_title_switched_off_for_the_video_still_names_the_still(self, project_root):
         # `enabled` answers "burn this into the clip". Whether the thumbnail
@@ -126,14 +152,45 @@ class TestDefaults:
         write_project(project_root, overlay={"enabled": False, "text": "Cold open"})
         highlight = Project(PROJECT_ID).highlights[0]
 
-        assert Thumbnailer().title(highlight).text == "Cold open"
+        assert Thumbnailer().title(Project(PROJECT_ID), highlight).text == "Cold open"
+
+    # The project setting is how a title is drawn. An automatic title that
+    # ignored it meant a restyled project kept turning out stills in the
+    # factory colours, which is the whole reason to have the setting.
+    def test_an_automatic_title_is_drawn_in_the_project_s_look(self, project_root):
+        write_project(
+            project_root,
+            overlay=None,
+            thumbnail_text="we *lost* it",
+            project_overlay={"position_pct": 40.0, "highlight_color": "#FF0000"},
+        )
+        title = Thumbnailer().title(Project(PROJECT_ID), Project(PROJECT_ID).highlights[0])
+
+        assert title.text == "we *lost* it"
+        assert title.position_pct == 40.0
+        assert title.highlight_color == "#FF0000"
+
+    # `enabled` on the project answers "burn titles into the video". The still
+    # carries text either way — that is `show_overlay`'s question — so the
+    # automatic title is drawn whatever the project says about burning.
+    def test_an_automatic_title_is_drawn_even_with_burning_switched_off(self, project_root):
+        write_project(
+            project_root,
+            overlay=None,
+            thumbnail_text="we *lost* it",
+            project_overlay={"enabled": False, "position_pct": 40.0},
+        )
+        title = Thumbnailer().title(Project(PROJECT_ID), Project(PROJECT_ID).highlights[0])
+
+        assert title.enabled is True
+        assert title.position_pct == 40.0
 
     def test_nothing_is_drawn_when_the_overlay_is_switched_off_for_the_still(self, project_root):
         write_project(project_root, overlay={"enabled": True, "text": "Cold open"})
         highlight = Project(PROJECT_ID).highlights[0]
         settings = ThumbnailSettings(show_overlay=False)
 
-        assert Thumbnailer().overlays(highlight, settings) == []
+        assert Thumbnailer().overlays(Project(PROJECT_ID), highlight, settings) == []
 
 
 class TestSettingsPersistence:

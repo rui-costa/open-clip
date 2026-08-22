@@ -34,7 +34,7 @@ WORD_MAP = "\n".join([
 ])
 
 
-def write_project(root: Path, captions=None, overlay=None):
+def write_project(root: Path, captions=None, overlay=None, project_overlay=None):
     project_dir = root / "projects" / PROJECT_ID
     project_dir.mkdir(parents=True, exist_ok=True)
     highlight = {
@@ -48,6 +48,8 @@ def write_project(root: Path, captions=None, overlay=None):
     settings = {"aspect_ratio": "9:16", "resolution": "1080p"}
     if captions is not None:
         settings["captions"] = captions
+    if project_overlay is not None:
+        settings["overlay"] = project_overlay
     metadata = {
         "project_id": PROJECT_ID,
         "name": "Overlay Project",
@@ -144,6 +146,24 @@ class TestOverlayRendering:
         line = build_overlay_style_line(OverlayText.from_dict(titled(outline_pct=1.0)), 1080, 1920)
         assert line.split(",")[16] == "9.6"
 
+    def test_the_shadow_is_a_frame_percentage_and_is_not_halved(self):
+        # Unlike the outline: an ASS Shadow and the preview's `text-shadow` are
+        # both a plain pixel offset, so the two already agree.
+        line = build_overlay_style_line(OverlayText.from_dict(titled(shadow_pct=1.0)), 1080, 1920)
+        assert line.split(",")[17] == "19.2"
+
+    def test_the_shadow_takes_its_own_colour(self):
+        line = build_overlay_style_line(OverlayText.from_dict(titled(shadow_color="#FF7A52")), 1080, 1920)
+        # BackColour is where libass reads the shadow from.
+        assert line.split(",")[6] == "&H00527AFF"
+
+    def test_a_title_nobody_configured_still_has_one(self):
+        # The lift is the default rather than an option: it is what separates
+        # the words from the picture, and on a thumbnail — one frame, no fade,
+        # no movement — it is the only lift there is.
+        line = build_overlay_style_line(OverlayText.from_dict(titled()), 1080, 1920)
+        assert float(line.split(",")[17]) > 0
+
     def test_a_box_colour_switches_to_the_opaque_box_border_style(self):
         boxed = build_overlay_style_line(OverlayText.from_dict(titled(box_color="#000000")), 1080, 1920)
         plain = build_overlay_style_line(OverlayText.from_dict(titled()), 1080, 1920)
@@ -163,6 +183,23 @@ class TestOverlayRendering:
     def test_it_draws_above_the_captions(self):
         # Layer 1 against the captions' layer 0.
         assert build_overlay_event(OverlayText.from_dict(titled())).startswith("Dialogue: 1,")
+
+    def test_a_marked_word_is_drawn_in_the_highlight_colour(self):
+        event = build_overlay_event(OverlayText.from_dict(titled(
+            text="we *lost* everything", highlight_color="#FFE000", text_color="#FFFFFF",
+        )))
+        # Yellow on, then the title's own colour back on: the rest of the line
+        # is not part of the mark.
+        assert "{\\c&H0000E0FF&}LOST{\\c&H00FFFFFF&}" in event
+        assert "*" not in event
+
+    def test_a_title_with_no_marks_is_drawn_exactly_as_before(self):
+        event = build_overlay_event(OverlayText.from_dict(titled(text="we lost everything")))
+        assert "\\c" not in event.split(",", 9)[-1].replace("\\fad", "")
+
+    def test_a_lone_asterisk_is_text_rather_than_a_mark(self):
+        event = build_overlay_event(OverlayText.from_dict(titled(text="rated 5*")))
+        assert "RATED 5*" in event
 
     def test_uppercase_is_applied_to_the_rendered_text(self):
         assert "COLD OPEN" in build_overlay_event(OverlayText.from_dict(titled(uppercase=True)))
@@ -233,13 +270,73 @@ class TestCaptionServiceWiring:
         assert payload["overlay"]["text"] == "Cold open"
         assert payload["overlay_font"]["height_ratio"] > 0
 
-    def test_a_clip_with_no_title_says_so(self, project_root):
+    def test_a_clip_with_no_title_of_its_own_falls_back_on_the_project_s(self, project_root):
         write_project(project_root)
         project = Project(PROJECT_ID)
         payload = CaptionService().preview(project, project.highlights[0])
 
-        assert payload["overlay"] is None
-        assert payload["overlay_font"] is None
+        # The project's own default: switched off, no words, so nothing draws.
+        assert payload["overlay"]["text"] == ""
+        assert payload["overlay"]["enabled"] is False
+        assert payload["overlay_locked"] is True
+
+
+class TestProjectConfiguration:
+    """The project setting is how a title is drawn, never what it says."""
+
+    def test_the_project_stores_no_text(self, project_root):
+        # A project saved before this was configuration-only carries a line
+        # that would otherwise reappear over every clip at once.
+        write_project(project_root, project_overlay=titled())
+        project = Project(PROJECT_ID)
+
+        assert project.settings.overlay.text == ""
+        assert project.settings.overlay.enabled is True
+
+    def test_a_clip_with_no_title_of_its_own_draws_nothing(self, project_root):
+        write_project(project_root, project_overlay=titled(position_pct=40.0))
+        project = Project(PROJECT_ID)
+
+        # The configuration is what it would be drawn in, not a title in itself.
+        assert CaptionService().overlay(project, project.highlights[0]) is None
+
+    def test_a_locked_clip_reports_the_look_a_title_would_take(self, project_root):
+        write_project(project_root, project_overlay=titled(position_pct=40.0))
+        project = Project(PROJECT_ID)
+        service = CaptionService()
+
+        resolved = service.overlay_settings(project, project.highlights[0])
+        assert resolved.position_pct == 40.0
+        assert resolved.text == ""
+        assert service.overlay_locked(project.highlights[0]) is True
+
+    def test_a_clip_with_its_own_title_speaks_for_itself(self, project_root):
+        write_project(
+            project_root,
+            project_overlay=titled(position_pct=40.0),
+            overlay={**titled(), "text": "Its own line"},
+        )
+        project = Project(PROJECT_ID)
+        service = CaptionService()
+
+        assert service.overlay(project, project.highlights[0]).text == "Its own line"
+        assert service.overlay_locked(project.highlights[0]) is False
+
+    def test_a_clip_can_switch_its_own_title_off(self, project_root):
+        write_project(
+            project_root,
+            project_overlay=titled(),
+            overlay={**titled(), "enabled": False},
+        )
+        project = Project(PROJECT_ID)
+
+        assert CaptionService().overlay(project, project.highlights[0]) is None
+
+    def test_a_project_written_before_the_setting_existed_has_no_title(self, project_root):
+        write_project(project_root)
+        project = Project(PROJECT_ID)
+
+        assert CaptionService().overlay(project, project.highlights[0]) is None
 
 
 class FakeEngine:

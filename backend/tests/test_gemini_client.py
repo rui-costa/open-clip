@@ -11,6 +11,7 @@ from google.genai.errors import ClientError, ServerError
 
 from backend.src.infrastructure import gemini_client as module
 from backend.src.infrastructure.gemini_client import GeminiClient, suggested_delay
+from backend.src.infrastructure.progress import reporting_to
 
 
 def api_error(cls, code, message="boom", details=None):
@@ -140,3 +141,60 @@ def test_suggested_delay_falls_back_to_the_prose_hint():
 
 def test_suggested_delay_is_absent_when_the_server_gives_no_hint():
     assert suggested_delay(overloaded()) is None
+
+
+# --- what the page is told while this is going on --------------------------
+#
+# One HTTP request here can take minutes, and a step that only says "running"
+# for all of them looks exactly like a step that has hung.
+
+def collect(client, prompt="prompt"):
+    """Runs a request with the progress channel pointed at a list."""
+    said = []
+    with reporting_to(said.append):
+        try:
+            client.generate_content(prompt)
+        except Exception:
+            pass
+    return said
+
+
+def test_it_says_which_model_it_is_waiting_for(client, monkeypatch):
+    record_calls(client, monkeypatch, lambda model: "{}" if model == "model-a" else overloaded())
+
+    assert collect(client)[0] == "Waiting for model-a to answer."
+
+
+def test_a_retry_says_why_and_for_how_long(client, monkeypatch):
+    record_calls(client, monkeypatch, lambda model: overloaded())
+
+    said = collect(client)
+
+    # The number of the attempt about to be made, not the one that just failed:
+    # what the user is waiting on is the next one.
+    assert any(
+        "model-a: Google says the model is overloaded. Trying again in" in line
+        and "attempt 2 of 4" in line
+        for line in said
+    ), said
+
+
+def test_falling_back_to_another_model_is_said_out_loud(client, monkeypatch):
+    record_calls(client, monkeypatch, lambda model: "{}" if model == "model-b" else overloaded())
+
+    said = collect(client)
+
+    assert "Gave up on model-a — Google says the model is overloaded. Trying model-b instead." in said
+
+
+def test_an_exhausted_key_is_named_as_one(client, monkeypatch):
+    record_calls(client, monkeypatch, lambda model: quota_exceeded())
+
+    assert any("this key is out of quota for it" in line for line in collect(client)), collect(client)
+
+
+def test_nothing_is_raised_when_nobody_is_collecting(client, monkeypatch):
+    """A step must not fail because its narration did."""
+    record_calls(client, monkeypatch, lambda model: "{}")
+
+    assert client.generate_content("prompt") == "{}"

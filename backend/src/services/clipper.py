@@ -61,7 +61,7 @@ class Clipper:
         """
         return (
             self.captions.is_enabled(project, highlight)
-            or self.captions.overlay(highlight) is not None
+            or self.captions.overlay(project, highlight) is not None
         )
 
     def _render_highlight(self, project: Project, engine, input_path: str, clips_dir: str,
@@ -96,7 +96,7 @@ class Clipper:
         # turned on between runs, so two clips in one project can
         # legitimately disagree.
         highlight.captions_burned = bool(subtitle_path) and self.captions.is_enabled(project, highlight)
-        highlight.overlay_burned = bool(subtitle_path) and self.captions.overlay(highlight) is not None
+        highlight.overlay_burned = bool(subtitle_path) and self.captions.overlay(project, highlight) is not None
         # The filename is the same on every render, so this is what tells a
         # browser holding the old file that there is a new one.
         highlight.rendered_at = datetime.now().isoformat()
