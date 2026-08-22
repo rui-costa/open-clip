@@ -9,10 +9,20 @@ import { getDescriptionFields } from '../api';
  * backend is what resolves them: a field that stops existing there has to stop
  * being advertised here on the same deploy.
  */
-export const DescriptionFieldHelp: React.FC = () => {
+interface DescriptionFieldHelpProps {
+  /**
+   * Fields that exist only in the template being edited — `{platform.post}` in
+   * a Postiz post, which has no meaning in a YouTube description. Listed after
+   * the shared ones rather than in place of them.
+   */
+  extra?: { field: string; description: string }[];
+}
+
+export const DescriptionFieldHelp: React.FC<DescriptionFieldHelpProps> = ({ extra = [] }) => {
   const { data } = useQuery({ queryKey: ['descriptionFields'], queryFn: getDescriptionFields });
 
-  if (!data?.fields?.length) return null;
+  const fields = [...extra, ...(data?.fields ?? [])];
+  if (!fields.length) return null;
 
   return (
     <details style={{ fontSize: '0.75rem' }}>
@@ -24,7 +34,7 @@ export const DescriptionFieldHelp: React.FC = () => {
         and a line whose fields are all empty is left out.
       </p>
       <dl style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-        {data.fields.map((item) => (
+        {fields.map((item) => (
           <div key={item.field} style={{ borderTop: 'var(--border)', paddingTop: 'var(--space-sm)' }}>
             <dt style={{ fontFamily: 'monospace', fontWeight: 700, overflowWrap: 'anywhere' }}>
               {`{${item.field}}`}

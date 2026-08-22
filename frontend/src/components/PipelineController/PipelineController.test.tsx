@@ -197,4 +197,41 @@ describe('PipelineActivity', () => {
 
     expect(container.firstChild).toBeNull();
   });
+
+  // A step that stopped is the case the activity entry cannot cover: the entry
+  // is dropped when the job ends, which is the moment the reason starts
+  // mattering. Without this, "error" was a colour and the reason was in the
+  // backend log.
+  it('says why a failed step stopped, after it has stopped', () => {
+    const failed: PipelineStep[] = [
+      {
+        name: 'postiz',
+        label: 'Postiz Drafts',
+        status: 'error',
+        error: 'No Postiz API key is configured. Add one in Settings.',
+      },
+    ];
+
+    render(<PipelineActivity steps={failed} activity={{}} now={5} />);
+
+    expect(screen.getByText(/Postiz Drafts stopped/)).toBeDefined();
+    expect(screen.getByText(/No Postiz API key is configured/)).toBeDefined();
+  });
+
+  it('says nothing about a failed step that gave no reason', () => {
+    const failed: PipelineStep[] = [{ name: 'chapters', label: 'Chapters', status: 'error' }];
+    const { container } = render(<PipelineActivity steps={failed} activity={{}} now={5} />);
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('shows a reason even when the backend sent no activity at all', () => {
+    const failed: PipelineStep[] = [
+      { name: 'postiz', label: 'Postiz Drafts', status: 'error', error: 'Postiz answered 500' },
+    ];
+
+    render(<PipelineActivity steps={failed} />);
+
+    expect(screen.getByText(/Postiz answered 500/)).toBeDefined();
+  });
 });

@@ -12,6 +12,12 @@ export interface PipelineStep {
   isLlm?: boolean;
   /** Labels of the steps that must run first, used to explain a locked state. */
   dependsOn?: string[];
+  /**
+   * Why this step failed, for a step that says. `error` on its own is a colour:
+   * it sent the user to the backend log for things as ordinary as an API key
+   * nobody had filled in. Present only while the status is `error`.
+   */
+  error?: string;
 }
 
 interface PipelineControllerProps {
@@ -461,7 +467,7 @@ interface PipelineActivityProps {
 }
 
 /**
- * What the running step is doing, in a sentence, under the row.
+ * What the running step is doing — and why a failed one stopped — under the row.
  *
  * The row itself can only say "running", and for the LLM steps that word
  * covers a single HTTP request that can take minutes — during which an
@@ -474,14 +480,19 @@ interface PipelineActivityProps {
  * buttons that change three or four times in a whole pipeline.
  */
 export const PipelineActivity: React.FC<PipelineActivityProps> = ({ steps, activity, now }) => {
-  if (!activity) return null;
   const clock = now ?? Date.now() / 1000;
 
-  const running = steps
-    .filter((step) => step.status === 'running' && activity[step.name])
-    .map((step) => ({ step, entry: activity[step.name] }));
+  const running = activity
+    ? steps
+        .filter((step) => step.status === 'running' && activity[step.name])
+        .map((step) => ({ step, entry: activity[step.name] }))
+    : [];
 
-  if (running.length === 0) return null;
+  // A reason outlives the run it came from: it is read after the step has
+  // stopped, which is the moment the activity entry above is thrown away.
+  const failed = steps.filter((step) => step.status === 'error' && step.error);
+
+  if (running.length === 0 && failed.length === 0) return null;
 
   return (
     <div
@@ -513,6 +524,26 @@ export const PipelineActivity: React.FC<PipelineActivityProps> = ({ steps, activ
           {/* Until something inside the step reports, the elapsed time is the
               whole message — and it is already more than "running" said. */}
           {entry.message ? ` — ${entry.message}` : ''}
+        </p>
+      ))}
+      {failed.map((step) => (
+        <p
+          key={step.name}
+          style={{
+            margin: 0,
+            fontSize: '0.7rem',
+            fontWeight: 700,
+            lineHeight: 1.4,
+            // The reason is the message, so it carries the colour rather than
+            // only the step name in front of it.
+            color: 'var(--error)',
+            overflowWrap: 'anywhere',
+          }}
+        >
+          <span style={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            {step.label} stopped
+          </span>
+          {` — ${step.error}`}
         </p>
       ))}
     </div>

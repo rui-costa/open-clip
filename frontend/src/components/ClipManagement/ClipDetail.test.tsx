@@ -9,6 +9,7 @@ import {
   getClipCaptions,
   getClipThumbnail,
   regenerateClip,
+  syncPostiz,
   updateClipOverlay,
   uploadClip,
   uploadClipThumbnail,
@@ -62,6 +63,9 @@ const overlayText: OverlayText = {
   text_color: '#FFFFFF',
   outline_color: '#000000',
   outline_pct: 0.6,
+  shadow_color: '#000000',
+  shadow_pct: 0.8,
+  highlight_color: '#FFE000',
   box_color: null,
   position_pct: 12,
   max_width_pct: 86,
@@ -84,6 +88,10 @@ vi.mock('../../api', () => ({
     url: 'https://youtube.com/watch?v=abc123',
     checked: true,
   }),
+  // A clip in Postiz asks what has become of it whenever this page opens: the
+  // clip route is not a child of the project one, so landing here directly is
+  // the case where nothing else would ask.
+  syncPostiz: vi.fn().mockResolvedValue({ checked: true, clips: {} }),
   updateProjectSettings: vi.fn().mockResolvedValue({ status: 'success' }),
   updateClipOverlay: vi.fn().mockResolvedValue({ status: 'success', overlay: null }),
   uploadClip: vi.fn(),
@@ -232,6 +240,11 @@ describe('ClipDetail Component', () => {
     // ordering rather than on behaviour.
     vi.mocked(uploadClip).mockReset();
     vi.mocked(uploadClipThumbnail).mockReset();
+    // Same reasoning: a sync from one test would otherwise count as a sync in
+    // the next, and "this project asks nothing of Postiz" would pass or fail on
+    // ordering.
+    vi.mocked(syncPostiz).mockReset();
+    vi.mocked(syncPostiz).mockResolvedValue({ checked: true, clips: {} });
     vi.mocked(getClipCaptions).mockResolvedValue(captionsWith(null));
   });
 
@@ -247,6 +260,119 @@ describe('ClipDetail Component', () => {
 
     expect(await screen.findByText('Thumbnail text')).toBeDefined();
     expect(screen.getByText('we *lost* it')).toBeDefined();
+  });
+
+  // Nothing tells this application when a draft in Postiz is sent, so until the
+  // sync existed a clip that went out an hour ago said "waiting in Postiz"
+  // forever — next to a button that would have filed a duplicate.
+  describe('what Postiz has done with the post', () => {
+    const inPostiz = (overrides: Partial<Highlight> = {}) =>
+      highlight({
+        postiz_post_id: 'post-1',
+        postiz_url: 'https://postiz.example.com',
+        postiz_imported_at: '2026-08-22T08:37:12',
+        ...overrides,
+      });
+
+    // This route is a sibling of the project page, not a child of it, so
+    // opening a clip's URL directly — a bookmark, a reload, a link — is the one
+    // case where nothing else would ask. Without this the page drew whatever
+    // was last written: a clip published an hour ago still said "waiting".
+    it('asks Postiz what happened as soon as the page opens', async () => {
+      vi.mocked(getProjectMetadata).mockResolvedValue(project([inPostiz()]));
+
+      renderDetail('0');
+
+      await waitFor(() => expect(syncPostiz).toHaveBeenCalledWith('test-project'));
+      // And the project is re-read, because the sync just rewrote it.
+      await waitFor(() => expect(getProjectMetadata).toHaveBeenCalledTimes(2));
+    });
+
+    it('asks nothing of Postiz for a project with nothing filed there', async () => {
+      vi.mocked(getProjectMetadata).mockResolvedValue(project([highlight()]));
+
+      renderDetail('0');
+
+      await screen.findByText(/hook/i);
+      expect(syncPostiz).not.toHaveBeenCalled();
+    });
+
+    it('says a clip is still waiting when Postiz has not sent it', async () => {
+      vi.mocked(getProjectMetadata).mockResolvedValue(project([inPostiz()]));
+
+      renderDetail('0');
+
+      expect(await screen.findByText(/Waiting in Postiz/)).toBeDefined();
+    });
+
+    it('says a clip is published, and links to the post on the platform', async () => {
+      vi.mocked(getProjectMetadata).mockResolvedValue(
+        project([
+          inPostiz({
+            postiz_state: 'published',
+            postiz_channels: [
+              {
+                id: 'chan-li',
+                name: 'Coffee and Bytes',
+                platform: 'linkedin',
+                state: 'published',
+                url: 'https://www.linkedin.com/feed/update/urn:li:ugcPost:749',
+              },
+            ],
+          }),
+        ])
+      );
+
+      renderDetail('0');
+
+      expect(await screen.findByText(/Published from Postiz/)).toBeDefined();
+      // The calendar is no longer where anyone wants to be sent.
+      const live = screen.getByRole('link', { name: 'Coffee and Bytes' });
+      expect(live).toHaveAttribute(
+        'href',
+        'https://www.linkedin.com/feed/update/urn:li:ugcPost:749'
+      );
+    });
+
+    // A clip filed to two accounts and published on one showed a single name,
+    // and nothing said the second account existed, let alone what it was doing.
+    it('names every channel the clip went to, published or not', async () => {
+      vi.mocked(getProjectMetadata).mockResolvedValue(
+        project([
+          inPostiz({
+            postiz_state: 'published',
+            postiz_channels: [
+              {
+                id: 'chan-page',
+                name: 'Coffee and Bytes',
+                platform: 'linkedin-page',
+                state: 'published',
+                url: 'https://www.linkedin.com/feed/update/urn:li:ugcPost:749',
+              },
+              { id: 'chan-me', name: 'Rui Costa', platform: 'linkedin' },
+            ],
+          }),
+        ])
+      );
+
+      renderDetail('0');
+
+      // The one that is out links to the post; the one that is not is still
+      // named, and says what it is doing.
+      expect(await screen.findByRole('link', { name: 'Coffee and Bytes' })).toBeDefined();
+      expect(screen.getByText(/Rui Costa/)).toBeDefined();
+      expect(screen.getByText(/waiting/)).toBeDefined();
+    });
+
+    it('says when Postiz could not send it', async () => {
+      vi.mocked(getProjectMetadata).mockResolvedValue(
+        project([inPostiz({ postiz_state: 'error' })])
+      );
+
+      renderDetail('0');
+
+      expect(await screen.findByText(/could not send this/)).toBeDefined();
+    });
   });
 
   it('shows a loading state while the project is being fetched', () => {

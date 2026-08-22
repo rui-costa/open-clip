@@ -330,6 +330,50 @@ class Highlight:
     # so the sentence the user needs cannot be the response to their click; it
     # is written here and read back when the job leaves /active_processes.
     upload_error: Optional[str] = None
+    # What importing this clip into Postiz produced, or None while it has never
+    # been imported. Kept beside the YouTube record rather than replacing it:
+    # the two are different destinations for the same clip — YouTube is
+    # published from here, Postiz is a draft somebody still has to send — and a
+    # clip can legitimately be in both.
+    postiz_post_id: Optional[str] = None
+    postiz_url: Optional[str] = None
+    postiz_imported_at: Optional[str] = None
+    # Which channels the last import filed against, as {id, name, platform}.
+    # Stored because the clip page has to be able to say where the draft went:
+    # the channel selection lives in application settings and can change between
+    # one import and the next.
+    postiz_channels: List[Dict[str, Any]] = field(default_factory=list)
+    # Why the last import filed nothing, or None when it worked or none has been
+    # made. Written for the same reason `upload_error` is: the import runs in
+    # the background, so the sentence the user needs cannot be the response to
+    # their click.
+    postiz_error: Optional[str] = None
+    # What Postiz stored this clip's video as, and which version of the file
+    # that was. The video is uploaded before the post is created, so a post
+    # that fails — a channel missing a required setting, a rate limit — leaves
+    # the bytes already there. Remembering them means the next attempt sends a
+    # request instead of forty megabytes again, and Postiz keeps one copy of
+    # the clip rather than one per attempt.
+    #
+    # The fingerprint is the file's own — size and last-written time — rather
+    # than anything this app maintains, so a clip re-cut by any route
+    # invalidates it without needing to remember to.
+    postiz_media_id: Optional[str] = None
+    postiz_media_path: Optional[str] = None
+    postiz_media_fingerprint: Optional[str] = None
+    # What Postiz has done with the post since, as of the last time it was
+    # asked: "published", "scheduled", "error", or None for a post it will not
+    # talk about — which is every draft, because the public API does not return
+    # them. None therefore means "not sent, or deleted, and Postiz will not say
+    # which", never "gone".
+    postiz_state: Optional[str] = None
+    postiz_synced_at: Optional[str] = None
+    # The group Postiz filed the first of this clip's channels under. Recorded
+    # because Postiz reports it, and for nothing else: it does not tie a clip's
+    # channels together. One clip filed to two accounts comes back as two posts
+    # with two different groups, so what identifies this clip's posts is the
+    # per-channel ids in `postiz_channels`, not this.
+    postiz_group: Optional[str] = None
     # Whether the rendered file has captions in its pixels. The preview overlay
     # keys off this: drawing captions over a clip that already has them burned
     # in would show every word twice.
@@ -390,6 +434,23 @@ class Highlight:
             youtube_url=data.get("youtube_url"),
             uploaded_at=data.get("uploaded_at"),
             upload_error=data.get("upload_error"),
+            # Absent for every clip nobody has imported, which is every clip
+            # written before Postiz was wired in.
+            postiz_post_id=data.get("postiz_post_id"),
+            postiz_url=data.get("postiz_url"),
+            postiz_imported_at=data.get("postiz_imported_at"),
+            postiz_channels=(
+                [entry for entry in data["postiz_channels"] if isinstance(entry, dict)]
+                if isinstance(data.get("postiz_channels"), list)
+                else []
+            ),
+            postiz_error=data.get("postiz_error"),
+            postiz_media_id=data.get("postiz_media_id"),
+            postiz_media_path=data.get("postiz_media_path"),
+            postiz_media_fingerprint=data.get("postiz_media_fingerprint"),
+            postiz_state=data.get("postiz_state"),
+            postiz_synced_at=data.get("postiz_synced_at"),
+            postiz_group=data.get("postiz_group"),
             # Clips cut before captions existed have none burned in, which is
             # exactly what the default says.
             captions_burned=data.get("captions_burned", False),
@@ -543,6 +604,79 @@ class DescriptionSettings:
         )
 
 
+@dataclass
+class PostizSettings:
+    """Where this project's clips are imported, when it differs from the app's.
+
+    A machine has one Postiz account, and projects on it are not one thing: a
+    company's podcast and somebody's side project are cut on the same install
+    and must not go to the same accounts. So the application settings are the
+    default, and a project may disagree.
+
+    `channels` is None while the project has no opinion, which is what every
+    project says until somebody chooses for it — and it is not the same as an
+    empty list, which is a project that has chosen to import nowhere. Storing
+    None rather than a copy of the global list is what keeps the inheritance
+    live: change the default later and a project that never chose follows it.
+
+    `channel_settings` is layered over the global one per channel rather than
+    replacing it, so a project can send to a different Discord channel without
+    restating everything else about that account.
+    """
+    channels: Optional[List[str]] = None
+    post_type: Optional[str] = None
+    channel_settings: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # How many of this project's clips land per day, or None to follow the
+    # application. 0 means all of them on the same day, which is what an import
+    # did before anybody could say otherwise.
+    per_day: Optional[int] = None
+    # What each post says, and what goes in the comment under it. Empty means
+    # "use the application's", the same way the description template does.
+    text_template: str = ""
+    comment_template: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Any) -> 'PostizSettings':
+        if not isinstance(data, dict):
+            return cls()
+        channels = data.get("channels")
+        if isinstance(channels, list):
+            # Coerced on the way in: these are ids that end up in a request
+            # body, and a number among them is a channel Postiz cannot match.
+            channels = [str(entry) for entry in channels if entry]
+        else:
+            channels = None
+
+        post_type = data.get("post_type")
+        if post_type not in ("draft", "schedule", "now"):
+            post_type = None
+
+        per_channel: Dict[str, Dict[str, str]] = {}
+        raw = data.get("channel_settings")
+        if isinstance(raw, dict):
+            for channel_id, values in raw.items():
+                if isinstance(values, dict):
+                    per_channel[str(channel_id)] = {
+                        str(k): str(v) for k, v in values.items() if v not in (None, "")
+                    }
+
+        per_day = data.get("per_day")
+        if isinstance(per_day, bool) or not isinstance(per_day, int) or per_day < 0:
+            per_day = None
+
+        return cls(
+            channels=channels,
+            post_type=post_type,
+            channel_settings=per_channel,
+            per_day=per_day,
+            text_template=str(data.get("text_template") or ""),
+            comment_template=str(data.get("comment_template") or ""),
+        )
+
+
 # What a clip shows while it is sitting still: its thumbnail, or the video
 # frame it is parked on. A project chooses once for all of its clips, because
 # the choice is about how the project is reviewed rather than about one clip.
@@ -565,6 +699,10 @@ class ProjectSettings:
     # into its clips.
     overlay: OverlayText = field(default_factory=OverlayText)
     description: DescriptionSettings = field(default_factory=DescriptionSettings)
+    # Where this project's clips are imported, when it differs from the
+    # application's. Default-constructed and empty, which means "follow the
+    # application settings" — see PostizSettings.
+    postiz: PostizSettings = field(default_factory=PostizSettings)
     # Thumbnail by default: a grid of stills is what the shorts will look like
     # in a feed, which is the question being asked while reviewing them. The
     # video frame is one click away either way.
@@ -590,6 +728,7 @@ class ProjectSettings:
             # would otherwise reappear over every clip at once.
             overlay=OverlayText.from_dict({**(data.get("overlay") or {}), "text": ""}),
             description=DescriptionSettings.from_dict(data.get("description")),
+            postiz=PostizSettings.from_dict(data.get("postiz")),
             # Anything else — a typo, a value from a later version — reads as
             # the default rather than reaching the page as a state it cannot
             # draw.
@@ -626,6 +765,14 @@ class Project:
     settings: ProjectSettings = field(default_factory=lambda: ProjectSettings("16:9", "1080p"))
     status: Optional[str] = None
     step_statuses: Dict[str, str] = field(default_factory=dict)
+    # Why each failed step failed, by step name, for the steps that say. A
+    # status of "error" is a colour and nothing else: the reason lived only in
+    # the backend log, and a step that stops because no API key was configured
+    # is a step the user could have fixed in ten seconds had anyone told them.
+    # Kept beside the statuses rather than in the transient step notes, because
+    # those are dropped the moment the step stops — which is exactly when the
+    # reason starts mattering.
+    step_errors: Dict[str, str] = field(default_factory=dict)
     base_path: Path = field(default=Path("projects"))
     base_directory: str = "projects"
     clip_base_directory: str = "clips"
@@ -719,7 +866,8 @@ class Project:
             "llm_outputs": self.llm_outputs,
             "settings": self.settings.to_dict(),
             "status": self.status,
-            "step_statuses": self.step_statuses
+            "step_statuses": self.step_statuses,
+            "step_errors": self.step_errors,
         }
 
     def from_dict(self, metadata: Dict[str, Any]):
@@ -738,16 +886,46 @@ class Project:
         
         self.status = metadata.get("status")
         self.step_statuses = metadata.get("step_statuses", {})
+        self.step_errors = metadata.get("step_errors", {})
 
     def set_step_status(self, step: str, status: str):
         def mutate(data: Dict[str, Any]):
             statuses = data.get("step_statuses") or {}
             statuses[step] = status
             data["step_statuses"] = statuses
+            # A step that is starting again, or that has just succeeded, is no
+            # longer described by why it failed last time. Cleared here rather
+            # than at each call site so no step can leave a stale reason behind
+            # a green badge.
+            if status != "error":
+                errors = data.get("step_errors") or {}
+                errors.pop(step, None)
+                data["step_errors"] = errors
 
         # Only this step's entry is touched; the statuses of steps running in
         # parallel are read back from disk rather than from a stale snapshot.
-        self.step_statuses = self._mutate_metadata(mutate)["step_statuses"]
+        metadata = self._mutate_metadata(mutate)
+        self.step_statuses = metadata["step_statuses"]
+        self.step_errors = metadata.get("step_errors", {})
+
+    def fail_step(self, step: str, message: str):
+        """Marks a step failed and says why, in a sentence the user can act on.
+
+        Both at once because they are one fact: a red badge with no reason is
+        what sends someone to the backend log, and the log is not where a
+        missing API key should have to be discovered.
+        """
+        def mutate(data: Dict[str, Any]):
+            statuses = data.get("step_statuses") or {}
+            statuses[step] = "error"
+            data["step_statuses"] = statuses
+            errors = data.get("step_errors") or {}
+            errors[step] = message
+            data["step_errors"] = errors
+
+        metadata = self._mutate_metadata(mutate)
+        self.step_statuses = metadata["step_statuses"]
+        self.step_errors = metadata["step_errors"]
 
     def set_property(self, key: str, value: Any):
         setattr(self, key, value)

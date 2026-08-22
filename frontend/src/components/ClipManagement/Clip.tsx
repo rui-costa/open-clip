@@ -21,6 +21,7 @@ import { formatTimecode } from '../../utils/aspectRatio';
 import { useInViewport } from '../../hooks/useInViewport';
 import { describeRequestFailure, useClipRender } from '../../hooks/useClipRender';
 import { useClipUpload } from '../../hooks/useClipUpload';
+import { useClipPostiz } from '../../hooks/useClipPostiz';
 import { ClipCaptionSettings, type CaptionPreviewSource } from './ClipCaptionSettings';
 import { DEFAULT_OVERLAY_TEXT, type OverlayText } from '../../api';
 
@@ -56,6 +57,27 @@ export interface ClipData {
   /** When this clip was last published, which is how a finished upload job is
    *  told from one that gave up. */
   uploadedAt?: string | null;
+  /**
+   * Where this clip is waiting in Postiz, once it has been imported.
+   *
+   * Unlike the YouTube record this points at a draft on the user's own
+   * calendar: importing again makes a second draft rather than publishing
+   * anything, so it changes what the button says and not whether it asks.
+   */
+  postizUrl?: string | null;
+  /** When this clip was last imported, which is how a finished import job is
+   *  told from one that gave up. */
+  postizImportedAt?: string | null;
+  /**
+   * What Postiz has since done with the post, from the last sync: `published`,
+   * `scheduled`, `error`, or absent for one it will not talk about.
+   *
+   * On the card because that is where a pass over a dozen clips happens, and
+   * "which of these have actually gone out" is the question being asked during
+   * one. Without it the card offered to import a clip that was already live and
+   * looked exactly like one that had never been filed.
+   */
+  postizState?: string | null;
   original_start: number;
   original_end: number;
   text: string;
@@ -82,6 +104,51 @@ interface ClipProps {
   /** Stagger offset for the grid's entrance. */
   enterDelayMs?: number;
 }
+
+/**
+ * What the card's Postiz button says and looks like, given where the clip is.
+ *
+ * Four states rather than two, because "filed" and "out" are not the same thing
+ * and the difference decides whether pressing the button again is a duplicate.
+ * A clip nobody has imported is the plain button; everything else is coloured
+ * *and* says why, since a colour alone is not something a screen reader or a
+ * colourblind user can read.
+ */
+const postizButtonState = (clip: ClipData) => {
+  if (!clip.postizUrl) {
+    return {
+      tooltip: 'Import to Postiz — a draft per channel, ready to send',
+      label: 'Import clip into Postiz',
+      colours: undefined as React.CSSProperties | undefined,
+    };
+  }
+  if (clip.postizState === 'published') {
+    return {
+      tooltip: 'Already published from Postiz — importing again posts it a second time',
+      label: 'Published from Postiz; import again to post it a second time',
+      colours: { backgroundColor: 'var(--success)', color: 'var(--on-success)' },
+    };
+  }
+  if (clip.postizState === 'error') {
+    return {
+      tooltip: 'Postiz could not send this one — open Postiz for the reason',
+      label: 'Postiz could not send this clip; import again to retry',
+      colours: { backgroundColor: 'var(--error)', color: 'var(--bg)' },
+    };
+  }
+  if (clip.postizState === 'scheduled') {
+    return {
+      tooltip: 'Scheduled in Postiz — importing again adds a second post',
+      label: 'Scheduled in Postiz; import again to add a second post',
+      colours: { borderColor: 'var(--accent)', color: 'var(--accent)' },
+    };
+  }
+  return {
+    tooltip: 'Waiting in Postiz as a draft — importing again makes a second one',
+    label: 'Waiting in Postiz; import again to make a second draft',
+    colours: { borderColor: 'var(--accent)', color: 'var(--accent)' },
+  };
+};
 
 const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio, clipPreview = 'thumbnail', onDelete, playingClipIndex, setPlayingClipIndex, enterDelayMs = 0 }) => {
   const [isConfirming, setIsConfirming] = useState(false);
@@ -250,6 +317,27 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
     uploadedAt: clip.uploadedAt,
     onFinished: setActionResult,
   });
+
+  // The import is the same shape of job as the upload — it re-cuts the clip
+  // first — and files a draft rather than publishing a video.
+  const { isImporting, start: startPostizImport } = useClipPostiz({
+    projectId,
+    clipIndex: clip.index,
+    importedAt: clip.postizImportedAt,
+    onFinished: setActionResult,
+  });
+
+  const handlePostizImport = () => {
+    if (isImporting) return;
+    setActionResult(null);
+    void startPostizImport();
+  };
+
+  // How the card describes this clip's standing in Postiz. Success for a post
+  // that is out and error for one that would not send — the same meanings the
+  // pipeline row and the captions button use — and words in every case, since
+  // colour on its own is not a state anybody can read.
+  const postiz = postizButtonState(clip);
 
   const handleRegenerate = () => {
     setActionResult(null);
@@ -468,7 +556,7 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
             onClick={() => setIsConfirmingUpload(true)}
             // Offered for a clip nobody has rendered: the upload cuts it first.
             // Refused while a re-cut is running, which writes the same file.
-            disabled={isUploading || isRendering}
+            disabled={isUploading || isRendering || isImporting}
             aria-busy={isUploading}
             aria-label={
               isUploading
@@ -520,7 +608,7 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
             <Button
               variant="ghost"
               onClick={handleUploadThumbnail}
-              disabled={isSendingThumbnail || isUploading}
+              disabled={isSendingThumbnail || isUploading || isImporting}
               aria-busy={isSendingThumbnail}
               aria-label="Upload this clip's thumbnail to the published video"
               style={{
@@ -545,6 +633,53 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
             </Button>
           </Tooltip>
         )}
+
+        {/* Not behind a confirmation, unlike the upload beside it: an import
+            files a draft on the user's own Postiz calendar, which reaches
+            nobody until they send it.
+
+            What the button says depends on what Postiz has done since, because
+            importing a clip that is already published is a duplicate post
+            rather than a correction — and the grid is where a dozen clips get
+            looked at in one pass. Colour never carries that alone: the tooltip
+            and the label say it in words, which is what DESIGN.md requires. */}
+        <Tooltip
+          text={
+            isImporting
+              ? 'Cutting the clip again, then filing it in Postiz…'
+              : postiz.tooltip
+          }
+        >
+          <Button
+            variant="ghost"
+            onClick={handlePostizImport}
+            // Every one of these cuts this same clip into the same file.
+            disabled={isImporting || isUploading || isRendering}
+            aria-busy={isImporting}
+            aria-label={isImporting ? 'Importing clip into Postiz' : postiz.label}
+            style={{
+              padding: '0.25rem',
+              minWidth: '44px',
+              minHeight: '44px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              ...postiz.colours,
+            }}
+          >
+            {isImporting ? '...' : (
+              // A calendar with the clip's play triangle on it: scheduled, not
+              // sent — which is the whole difference from the upload icon.
+              <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="5" width="18" height="16" rx="2" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+                <line x1="8" y1="3" x2="8" y2="7" />
+                <line x1="16" y1="3" x2="16" y2="7" />
+                <polygon points="10.5 13.5 15.5 15.75 10.5 18" />
+              </svg>
+            )}
+          </Button>
+        </Tooltip>
 
         <Tooltip
           text={
@@ -618,7 +753,7 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
             variant="ghost"
             onClick={handleRegenerate}
             // An upload is cutting this same clip, into the same file.
-            disabled={isRendering || isUploading}
+            disabled={isRendering || isUploading || isImporting}
             aria-busy={isRendering}
             aria-label={isRendered ? 'Re-render this clip' : 'Render this clip'}
             style={{

@@ -5,6 +5,7 @@ import { Button } from '../Button';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { describeRequestFailure, useClipRender } from '../../hooks/useClipRender';
 import { useClipUpload } from '../../hooks/useClipUpload';
+import { useClipPostiz } from '../../hooks/useClipPostiz';
 
 interface ClipActionsProps {
   projectId: string;
@@ -37,6 +38,26 @@ interface ClipActionsProps {
    * from one that fell over: the job leaves `/active_processes` either way.
    */
   renderedAt?: string | null;
+  /**
+   * Where this clip's Postiz post sits, once it has been imported. Unlike the
+   * YouTube record this points at a draft on the user's own calendar, so the
+   * link is an invitation to go and send it rather than a published thing.
+   */
+  postizUrl?: string | null;
+  /**
+   * When this clip was last imported, which is how a finished import job is
+   * told from one that gave up: the job leaves `/active_processes` either way.
+   */
+  postizImportedAt?: string | null;
+  /**
+   * What Postiz has since done with the post, from the last sync: `published`,
+   * `scheduled`, `error`, or absent for one it will not talk about — which is
+   * every draft, since its public API returns none. So absent is "waiting, as
+   * far as anyone here can tell", not "gone".
+   */
+  postizState?: string | null;
+  /** Each channel the post went to, and where it landed once it is out. */
+  postizChannels?: { id: string; name?: string; platform?: string; state?: string | null; url?: string | null }[];
   /** Opens the overlay-text editor, which the page owns because it draws into the player. */
   onEditOverlay: () => void;
   /** True once this clip has a title, so the button can say which it does. */
@@ -54,6 +75,10 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
   youtubeVideoId,
   uploadedAt,
   renderedAt,
+  postizUrl,
+  postizImportedAt,
+  postizState,
+  postizChannels = [],
   onEditOverlay,
   hasOverlay = false,
   onEditThumbnail,
@@ -110,6 +135,22 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
     onFinished: setActionResult,
   });
 
+  // The Postiz import is the same shape of job as the upload — it re-cuts the
+  // clip first — and differs in what it produces: a draft on a calendar the
+  // user owns rather than a public video.
+  const { isImporting, start: startPostizImport } = useClipPostiz({
+    projectId,
+    clipIndex,
+    importedAt: postizImportedAt,
+    onFinished: setActionResult,
+  });
+
+  const handlePostizImport = () => {
+    if (isImporting) return;
+    setActionResult(null);
+    void startPostizImport();
+  };
+
   const handleRegenerate = () => {
     setActionResult(null);
     void startRender();
@@ -165,7 +206,7 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
         style={rowStyle}
         onClick={() => setIsConfirming(true)}
         // Available for a clip nobody has rendered: the upload cuts it first.
-        disabled={isUploading || isRendering}
+        disabled={isUploading || isRendering || isImporting}
       >
         {isUploading
           ? 'Rendering, then uploading…'
@@ -202,7 +243,7 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
           size="sm"
           style={rowStyle}
           onClick={handleUploadThumbnail}
-          disabled={isSendingThumbnail || isUploading}
+          disabled={isSendingThumbnail || isUploading || isImporting}
         >
           {isSendingThumbnail ? 'Sending the thumbnail…' : 'Upload thumbnail to YouTube'}
         </Button>
@@ -222,6 +263,76 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
           .
         </p>
       )}
+      {/* Not behind a confirmation, unlike the upload: what this makes is a
+          draft on the user's own Postiz calendar, which reaches nobody until
+          they open it and press send. Importing twice makes a second draft
+          rather than doing anything irreversible. */}
+      <Button
+        variant="ghost"
+        size="sm"
+        style={rowStyle}
+        onClick={handlePostizImport}
+        // Every one of these cuts this same clip into the same file.
+        disabled={isImporting || isUploading || isRendering}
+      >
+        {isImporting
+          ? 'Rendering, then importing…'
+          : postizUrl
+            ? 'Import to Postiz again'
+            : 'Import to Postiz'}
+      </Button>
+      {isImporting && (
+        <p style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+          Cutting the clip again, then filing it in Postiz. This keeps going if you leave the page.
+        </p>
+      )}
+      {postizUrl && !isImporting && (
+        // What Postiz says now, not what this app did once. A clip whose draft
+        // went out an hour ago said "waiting in Postiz" forever until the sync
+        // existed, and a live post is exactly the thing a second import would
+        // duplicate.
+        <p style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>
+          {postizState === 'published'
+            ? 'Published from Postiz'
+            : postizState === 'scheduled'
+              ? 'Scheduled in Postiz'
+              : postizState === 'error'
+                ? 'Postiz could not send this'
+                : 'Waiting in Postiz'}
+          {': '}
+          <a href={postizUrl} target="_blank" rel="noreferrer">
+            {postizUrl}
+          </a>
+        </p>
+      )}
+      {postizUrl && !isImporting && postizChannels.length > 0 && (
+        // Every channel the clip went to, not only the ones that are out. A
+        // list of the published ones alone silently loses the others: a clip
+        // filed to two accounts and published on one showed a single name, and
+        // nothing said the second account existed, let alone what it was doing.
+        <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+          {postizChannels.map((channel) => (
+            <li key={channel.id} style={{ overflowWrap: 'anywhere' }}>
+              {channel.url ? (
+                // Out, so the post itself is where anyone wants to be sent.
+                <a href={channel.url} target="_blank" rel="noreferrer">
+                  {channel.name || channel.platform || channel.id}
+                </a>
+              ) : (
+                channel.name || channel.platform || channel.id
+              )}
+              {' — '}
+              {channel.state === 'published'
+                ? 'published'
+                : channel.state === 'error'
+                  ? 'failed to send'
+                  : channel.state === 'queue' || channel.state === 'scheduled'
+                    ? 'scheduled'
+                    : 'waiting'}
+            </li>
+          ))}
+        </ul>
+      )}
       {/* Always available, whether or not there is a file yet: this is the one
           action that turns the settings on this page — captions, the title, the
           project's aspect ratio — into an actual clip. */}
@@ -230,8 +341,9 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
         size="sm"
         style={rowStyle}
         onClick={handleRegenerate}
-        // An upload is cutting this same clip, into the same file.
-        disabled={isRendering || isUploading}
+        // An upload or a Postiz import is cutting this same clip, into the
+        // same file.
+        disabled={isRendering || isUploading || isImporting}
       >
         {isRendering ? 'Rendering this clip…' : isRendered ? 'Regenerate clip' : 'Render this clip'}
       </Button>

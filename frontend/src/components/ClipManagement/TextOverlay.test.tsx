@@ -152,8 +152,13 @@ describe('TextOverlay', () => {
       render(<TextOverlay overlay={{ ...TITLE, text: 'WE LOST' }} time={0} still onOverflow={onOverflow} />);
       expect(onOverflow).toHaveBeenLastCalledWith(false);
     } finally {
-      delete (HTMLElement.prototype as Partial<HTMLElement>).scrollWidth;
-      delete (HTMLElement.prototype as Partial<HTMLElement>).clientWidth;
+      // Through an index signature rather than through the DOM type: both
+      // properties are readonly on HTMLElement, and `Partial<HTMLElement>`
+      // keeps that, so the delete would not typecheck. What is being removed
+      // is the stub defined above, not the real accessor.
+      const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+      delete proto.scrollWidth;
+      delete proto.clientWidth;
     }
   });
 

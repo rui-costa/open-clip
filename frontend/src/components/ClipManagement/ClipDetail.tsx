@@ -10,6 +10,7 @@ import {
   getSourceVideoUrl,
   getAspectRatioMap,
   getResolutionMap,
+  syncPostiz,
   DEFAULT_OVERLAY_TEXT,
   type OverlayText,
   type ProjectMetadata,
@@ -157,6 +158,33 @@ export const ClipDetail: React.FC = () => {
 
   const { data: aspectRatiosData } = useQuery({ queryKey: ['aspectRatios'], queryFn: getAspectRatioMap });
   const { data: resolutionsData } = useQuery({ queryKey: ['resolutions'], queryFn: getResolutionMap });
+
+  // What Postiz has done with this project's posts since they were filed.
+  //
+  // Asked here as well as on the project page, because this is a route of its
+  // own rather than a child of that one: opening a clip's URL directly — a
+  // bookmark, a reload, a link — rendered whatever was last written, so a clip
+  // published an hour ago went on saying it was waiting, and one whose post had
+  // been deleted went on claiming to be filed.
+  //
+  // Same key as the project page's, so navigating from the grid reuses that
+  // answer instead of asking again, and the sync's own writes land once.
+  const hasPostizPosts = (projectMetadata?.highlights ?? []).some((h) => h.postiz_post_id);
+  const { data: postizSync } = useQuery({
+    queryKey: ['postizSync', projectId],
+    queryFn: () => syncPostiz(projectId!),
+    enabled: !!projectId && hasPostizPosts,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
+  React.useEffect(() => {
+    // The sync writes what it learned onto the clips, so the copy this page is
+    // drawing from is now the stale one.
+    if (postizSync?.checked) {
+      void refetch();
+    }
+  }, [postizSync, refetch]);
 
   // Base 10, and NaN for anything that is not a number at all. A hand-typed or
   // stale URL used to reach the captions request as `clip/NaN/captions` before
@@ -478,6 +506,10 @@ export const ClipDetail: React.FC = () => {
             youtubeVideoId={highlight.youtube_video_id}
             uploadedAt={highlight.uploaded_at}
             renderedAt={highlight.rendered_at}
+            postizUrl={highlight.postiz_url}
+            postizImportedAt={highlight.postiz_imported_at}
+            postizState={highlight.postiz_state}
+            postizChannels={highlight.postiz_channels}
             hasOverlay={hasTitle}
             onEditOverlay={() => setIsEditingOverlay(true)}
             onEditThumbnail={() => setIsEditingThumbnail(true)}

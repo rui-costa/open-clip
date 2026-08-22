@@ -17,6 +17,9 @@ const STEP_LABELS: Record<string, string> = {
   metadata: 'Titles & Posts',
   clipper: 'Clips',
   upload: 'Upload',
+  // Named for where the clips end up rather than for what the step does to
+  // them: 'Import' alone reads as bringing something in, which is backwards.
+  postiz: 'Postiz Drafts',
 };
 
 const titleCase = (name: string) =>

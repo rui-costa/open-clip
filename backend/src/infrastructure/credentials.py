@@ -5,38 +5,72 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-class LocalCredentialProvider:
-    def __init__(self, secrets_dir: str = "backend/config"):
-        self.secrets_file = os.path.join(secrets_dir, "secrets.json")
+class JsonFileStore:
+    """A flat key/value store backed by a single JSON file."""
+
+    def __init__(self, config_dir: str = "backend/config", filename: str = "store.json"):
+        self.path = os.path.join(config_dir, filename)
 
     def load_all(self) -> Dict[str, Any]:
-        if not os.path.exists(self.secrets_file):
-            logger.info("Secrets file does not exist.")
+        if not os.path.exists(self.path):
+            logger.info(f"{self.path} does not exist.")
             return {}
         try:
-            with open(self.secrets_file, "r") as f:
+            with open(self.path, "r") as f:
                 content = json.load(f)
-                logger.info(f"Loaded secrets: {content.keys()}")
+                logger.info(f"Loaded {self.path}: {list(content.keys()) if isinstance(content, dict) else 'invalid'}")
                 return content if isinstance(content, dict) else {}
         except Exception as e:
-            logger.error(f"Error loading secrets: {e}")
+            logger.error(f"Error loading {self.path}: {e}")
             return {}
 
     def load(self, key: str) -> Optional[Any]:
-        secrets = self.load_all()
-        return secrets.get(key)
+        return self.load_all().get(key)
 
     def save(self, key: str, value: Any) -> None:
-        os.makedirs(os.path.dirname(self.secrets_file), exist_ok=True)
-        secrets = self.load_all()
-        secrets[key] = value
-        with open(self.secrets_file, "w") as f:
-            json.dump(secrets, f, indent=4)
+        self.save_all({key: value})
 
-    def save_all(self, secrets_dict: Dict[str, Any]) -> None:
-        os.makedirs(os.path.dirname(self.secrets_file), exist_ok=True)
-        secrets = self.load_all()
-        secrets.update(secrets_dict)
-        with open(self.secrets_file, "w") as f:
-            json.dump(secrets, f, indent=4)
+    def save_all(self, values: Dict[str, Any]) -> None:
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        stored = self.load_all()
+        stored.update(values)
+        try:
+            with open(self.path, "w") as f:
+                json.dump(stored, f, indent=4)
+        except Exception as e:
+            logger.error(f"Error saving {self.path}: {e}")
 
+    def delete(self, key: str) -> None:
+        stored = self.load_all()
+        if key not in stored:
+            return
+        del stored[key]
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        try:
+            with open(self.path, "w") as f:
+                json.dump(stored, f, indent=4)
+        except Exception as e:
+            logger.error(f"Error saving {self.path}: {e}")
+
+
+class LocalCredentialProvider(JsonFileStore):
+    """Stores API keys and other credentials in backend/config/secrets.json."""
+
+    def __init__(self, secrets_dir: str = "backend/config"):
+        super().__init__(config_dir=secrets_dir, filename="secrets.json")
+
+    @property
+    def secrets_file(self) -> str:
+        return self.path
+
+
+class LocalUserSettingsProvider(JsonFileStore):
+    """Stores per-user preferences in backend/config/user_settings.json.
+
+    These are the settings that differ between installations - personal
+    descriptions, self-hosted service URLs, machine-specific encoders - and are
+    kept out of the tracked settings.json so the repository stays shareable.
+    """
+
+    def __init__(self, config_dir: str = "backend/config"):
+        super().__init__(config_dir=config_dir, filename="user_settings.json")

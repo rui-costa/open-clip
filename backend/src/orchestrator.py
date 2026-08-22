@@ -12,6 +12,7 @@ from backend.src.services.llm_query import LLMQuery
 from backend.src.services.llm_tasks import discover_tasks
 from backend.src.services.clipper import Clipper
 from backend.src.services.thumbnailer import Thumbnailer
+from backend.src.services.postiz_publisher import PostizImportInProgressError, PostizPublisher
 from backend.src.services.uploader import Uploader, UploadInProgressError
 
 logger = logging.getLogger(__name__)
@@ -48,10 +49,20 @@ class PipelineOrchestrator:
         self.services = services or self._build_services()
 
     def _build_services(self) -> Dict[str, Any]:
+        postiz = PostizPublisher()
         services: Dict[str, Any] = {
             "transcription": Transcriber(),
-            "clipper": Clipper(),
+            # Each clip is handed to Postiz the moment its file exists, rather
+            # than waiting for the whole step to finish. A project of twenty
+            # clips is twenty minutes of encoding, and there is no reason the
+            # first clip's draft should wait for the twentieth clip's encode.
+            #
+            # Wired here because this is the one place that knows about both:
+            # the clipper takes a callback and never learns what Postiz is, and
+            # the publisher decides for itself whether it is configured to act.
+            "clipper": Clipper(on_clip_rendered=postiz.import_rendered),
             "upload": Uploader(),
+            "postiz": postiz,
         }
         for name, task in self.llm_tasks.items():
             services[name] = LLMQuery(task_name=name, task=task)
@@ -274,6 +285,12 @@ class PipelineOrchestrator:
                 raise ClipRegenerationInProgressError(
                     "This clip is being re-cut. Wait for that to finish, then upload it."
                 )
+            # An import cuts the clip as well, into the same file.
+            if f"{project_id}_postiz_clip_{clip_index}" in self.active_processes:
+                raise PostizImportInProgressError(
+                    "This clip is being imported into Postiz, which re-cuts it. "
+                    "Wait for that to finish, then upload it."
+                )
             self.active_processes[key] = time.time()
 
         try:
@@ -291,6 +308,78 @@ class PipelineOrchestrator:
             except Exception as e:
                 logger.exception(f"Uploading clip {clip_index} failed for project {project_id}")
                 uploader.record_failure(project, clip_index, str(e) or e.__class__.__name__)
+            finally:
+                self._unregister_process(key)
+
+        thread = threading.Thread(target=runner)
+        thread.start()
+        return key
+
+    def import_clip_to_postiz(self, project_id: str, clip_index: int) -> str:
+        """Re-cuts one clip and files it in Postiz in the background.
+
+        Backgrounded and keyed exactly like `upload_clip`, and for the same
+        reasons: the import begins with a fresh cut, which outlives a browser
+        request, and the outcome the user is owed is written onto the highlight
+        — `postiz_url`, or `postiz_error` — to be read back when this key
+        leaves /active_processes.
+
+        The Postiz handle is opened here rather than in the thread, so a missing
+        or rejected API key, and an account with no channels, are reported to
+        the click that asked rather than after minutes of encoding.
+
+        Raises IndexError when there is no highlight at `clip_index`,
+        PostizImportInProgressError when this clip is already being imported,
+        UploadInProgressError while it is being published to YouTube, and
+        ClipRegenerationInProgressError when a re-cut of it is already running —
+        all three cut the same clip into the same file.
+        """
+        project = Project(project_id)
+        if clip_index < 0 or clip_index >= len(project.highlights):
+            raise IndexError(f"No highlight at index {clip_index}")
+
+        publisher = self.services.get("postiz")
+        if publisher is None:
+            raise RuntimeError("No Postiz service is configured.")
+
+        key = f"{project_id}_postiz_clip_{clip_index}"
+        with self._lock:
+            if key in self.active_processes:
+                raise PostizImportInProgressError(
+                    "This clip is already being imported into Postiz."
+                )
+            if f"{project_id}_upload_clip_{clip_index}" in self.active_processes:
+                raise UploadInProgressError(
+                    "This clip is being published to YouTube. Wait for that to finish, "
+                    "then import it."
+                )
+            if f"{project_id}_clip_{clip_index}" in self.active_processes:
+                raise ClipRegenerationInProgressError(
+                    "This clip is being re-cut. Wait for that to finish, then import it."
+                )
+            self.active_processes[key] = time.time()
+
+        try:
+            client = publisher.open_client()
+            # Asked before anything is encoded: an account with nothing
+            # connected is the commonest first-run failure, and it is the one
+            # the user can act on immediately.
+            publisher.resolve_channels(client, project)
+        except Exception:
+            self._unregister_process(key)
+            raise
+        # Whatever the last attempt failed with is about to be answered by this
+        # one, and a stale message is what the page would otherwise read back.
+        publisher.begin_attempt(project, clip_index)
+
+        def runner():
+            try:
+                publisher.import_one(project, clip_index, client=client)
+            except Exception as e:
+                logger.exception(
+                    f"Importing clip {clip_index} into Postiz failed for project {project_id}"
+                )
+                publisher.record_failure(project, clip_index, str(e) or e.__class__.__name__)
             finally:
                 self._unregister_process(key)
 
@@ -347,6 +436,12 @@ class PipelineOrchestrator:
             if f"{project_id}_upload_clip_{clip_index}" in self.active_processes:
                 raise UploadInProgressError(
                     "This clip is being uploaded, which re-cuts it. Wait for that to finish."
+                )
+            # A Postiz import cuts the clip too, into the same file.
+            if f"{project_id}_postiz_clip_{clip_index}" in self.active_processes:
+                raise PostizImportInProgressError(
+                    "This clip is being imported into Postiz, which re-cuts it. "
+                    "Wait for that to finish."
                 )
             self.active_processes[key] = time.time()
 

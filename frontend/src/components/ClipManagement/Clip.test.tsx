@@ -9,6 +9,7 @@ import {
   getClipCaptions,
   getClipThumbnail,
   regenerateClip,
+  importClipToPostiz,
   uploadClip,
   uploadClipThumbnail,
 } from '../../api';
@@ -28,6 +29,11 @@ vi.mock('../../api', async (importOriginal) => ({
   uploadClip: vi.fn().mockResolvedValue({
     status: 'started',
     job: 'test-project-123_upload_clip_0',
+  }),
+  // An import answers with a key too: it re-cuts the clip before it files it.
+  importClipToPostiz: vi.fn().mockResolvedValue({
+    status: 'started',
+    job: 'test-project-123_postiz_clip_0',
   }),
   // Nothing is published by this one: the video keeps its id, and only the
   // still changes.
@@ -229,6 +235,9 @@ describe('Clip Component', () => {
       text_color: '#FFFFFF',
       outline_color: '#000000',
       outline_pct: 0.6,
+      shadow_color: '#000000',
+      shadow_pct: 0.8,
+      highlight_color: '#FFE000',
       box_color: null,
       position_pct: 12,
       max_width_pct: 86,
@@ -726,4 +735,71 @@ describe('Clip Component', () => {
       expect(screen.getByRole('dialog').querySelector('video')?.getAttribute('src')).toBe(SOURCE_URL);
     });
   });
+
+  describe('importing into Postiz', () => {
+    it('files the clip without asking, because nothing is published', async () => {
+      renderClip(renderedClip);
+
+      fireEvent.click(screen.getByLabelText('Import clip into Postiz'));
+
+      // No confirmation, unlike the upload beside it: what this makes is a
+      // draft on the user's own calendar.
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(importClipToPostiz).toHaveBeenCalledWith('test-project-123', 0)
+      );
+      expect(uploadClip).not.toHaveBeenCalled();
+    });
+
+    // The grid is where a dozen clips are looked at in one pass, and "which of
+    // these have actually gone out" is the question being asked during one.
+    // Colour never says it alone: the label carries the state in words.
+    it('says a clip is waiting, and that importing again makes a second draft', () => {
+      renderClip({ ...renderedClip, postizUrl: 'https://postiz.example.com' });
+
+      expect(
+        screen.getByLabelText('Waiting in Postiz; import again to make a second draft')
+      ).toBeInTheDocument();
+    });
+
+    it('says a clip is published, because importing it again posts it twice', () => {
+      renderClip({
+        ...renderedClip,
+        postizUrl: 'https://postiz.example.com',
+        postizState: 'published',
+      });
+
+      const button = screen.getByLabelText(
+        'Published from Postiz; import again to post it a second time'
+      );
+      expect(button).toBeInTheDocument();
+      expect(button.style.backgroundColor).toBe('var(--success)');
+    });
+
+    it('says when Postiz could not send one', () => {
+      renderClip({
+        ...renderedClip,
+        postizUrl: 'https://postiz.example.com',
+        postizState: 'error',
+      });
+
+      expect(
+        screen.getByLabelText('Postiz could not send this clip; import again to retry')
+      ).toBeInTheDocument();
+    });
+
+    it('leaves a clip nobody has imported as the plain button', () => {
+      renderClip(renderedClip);
+
+      const button = screen.getByLabelText('Import clip into Postiz');
+      expect(button.style.backgroundColor).toBe('');
+    });
+
+    it('is offered for a clip nobody has rendered, because the import cuts it', () => {
+      renderClip(previewClip);
+
+      expect(screen.getByLabelText('Import clip into Postiz')).toBeEnabled();
+    });
+  });
+
 });

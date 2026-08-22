@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CaptionStyler } from '../ClipManagement/CaptionStyler';
 import { OverlayStyler } from '../ClipManagement/OverlayStyler';
 import { DescriptionPanel } from './DescriptionPanel';
+import { PostizPanel } from './PostizPanel';
 import {
   getAspectRatioMap,
   getResolutionMap,
@@ -184,6 +185,14 @@ export const ProjectSettingsMenu: React.FC<ProjectSettingsMenuProps> = ({ metada
             variant="inline"
             projectId={metadata.project_id}
             settings={metadata.settings?.description}
+          />
+          {/* Where this project's clips go, which is not necessarily where the
+              rest of them go: one install cuts a company's podcast and
+              somebody's side project. */}
+          <PostizPanel
+            variant="inline"
+            projectId={metadata.project_id}
+            settings={metadata.settings?.postiz}
           />
         </div>
       </div>

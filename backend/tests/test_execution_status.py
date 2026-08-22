@@ -39,7 +39,8 @@ def status_url(tmp_path, monkeypatch):
         "video_metadata": {"components": [], "top_recommendations": []},
         "settings": {"aspect_ratio": "9:16", "resolution": "1080p"},
         "status": None,
-        "step_statuses": {"transcript": "completed"},
+        "step_statuses": {"transcript": "completed", "postiz": "running"},
+        "step_errors": {},
     }))
     monkeypatch.chdir(tmp_path)
 
@@ -84,3 +85,24 @@ def test_reports_what_each_running_step_is_doing(status_url):
     # there: the page reads it without checking, and a missing one is a crash
     # in the browser rather than an empty panel.
     assert payload["activity"] == {}
+
+
+def test_a_step_left_mid_run_by_a_restart_is_not_reported_as_running(status_url):
+    """"running" is written by the step and cleared by the step.
+
+    Anything that stops in between — this process being restarted, a crash, an
+    exception raised before the status could be moved — leaves that word on
+    disk with nothing running it, and the page then shows a step that never
+    finishes and a button offering to stop something that is not there.
+    """
+    payload = json.loads(urllib.request.urlopen(status_url).read())
+
+    assert payload["postiz"] == "error"
+    assert "stopped without finishing" in payload["step_errors"]["postiz"]
+
+
+def test_a_step_that_failed_says_why(status_url):
+    payload = json.loads(urllib.request.urlopen(status_url).read())
+
+    # Always present, like `activity`: the page reads it without checking.
+    assert isinstance(payload["step_errors"], dict)

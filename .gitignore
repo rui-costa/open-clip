@@ -107,6 +107,9 @@ client_secret*.json
 token.json
 .env
 
+#per-user preferences (descriptions, self-hosted URLs, local encoder)
+backend/config/user_settings.json
+
 #AI coding agents
 .gemini/
 .claude/

@@ -15,6 +15,12 @@ interface ClipRaw {
   youtubeVideoId?: string | null;
   /** When it was last published, which is how a finished upload is judged. */
   uploadedAt?: string | null;
+  /** The draft this clip is waiting as in Postiz, once it has been imported. */
+  postizUrl?: string | null;
+  /** When it was last imported, which is how a finished import is judged. */
+  postizImportedAt?: string | null;
+  /** What Postiz has done with it since: published, scheduled, error, or none. */
+  postizState?: string | null;
   original_start: number;
   original_end: number;
   text: string;

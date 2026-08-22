@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSettings, updateSettings, getResolutionMap, getAspectRatioMap, getCaptionStyles, getDescriptionFields, getYoutubeStatus, connectYoutube, cancelYoutubeConnect, type SettingsResponse } from '../api';
+import { getSettings, updateSettings, getResolutionMap, getAspectRatioMap, getCaptionStyles, getDescriptionFields, getYoutubeStatus, connectYoutube, cancelYoutubeConnect, getPostizStatus, type SettingsResponse } from '../api';
 import { useDebounce } from '../hooks/useDebounce';
 import { DescriptionFieldHelp } from './DescriptionFieldHelp';
+
+/** Fields that mean something in a Postiz post and nothing in a description. */
+const POSTIZ_FIELDS = [
+  { field: 'platform.post', description: "What the model wrote for the platform this post is going to" },
+  { field: 'platform.name', description: 'The platform itself, e.g. x, linkedin' },
+];
 
 interface SettingsPageProps {
   theme: 'light' | 'dark';
@@ -50,6 +56,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
     refetchInterval: (query) => (query.state.data?.consent?.pending ? 2000 : false),
   });
 
+  // Asked once the key is saved, and re-asked when it changes: the channel
+  // list is what proves the key works, so it is both the answer and the check.
+  const { data: postiz } = useQuery({
+    queryKey: ['postizStatus'],
+    queryFn: getPostizStatus,
+    retry: false,
+  });
+
   const connectMutation = useMutation({
     mutationFn: connectYoutube,
     onSuccess: ({ authorization_url }) => {
@@ -83,10 +97,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
   const [descriptionText, setDescriptionText] = useState('');
   const [descriptionTemplate, setDescriptionTemplate] = useState('');
   const [ytSecrets, setYtSecrets] = useState('');
+  const [postizKey, setPostizKey] = useState('');
+  const [showPostizKey, setShowPostizKey] = useState(false);
+  const [postizUrl, setPostizUrl] = useState('');
+  // Paragraphs typed once, so they are saved when the user leaves the box —
+  // the same way the description template is.
+  const [postizText, setPostizText] = useState('');
+  const [postizComment, setPostizComment] = useState('');
   const [jsonError, setJsonError] = useState(false);
 
   const debouncedApiKey = useDebounce(apiKey, 500);
   const debouncedYtSecrets = useDebounce(ytSecrets, 500);
+  const debouncedPostizKey = useDebounce(postizKey, 500);
+  const debouncedPostizUrl = useDebounce(postizUrl, 500);
 
   // Track whether the local state has been initialized from server data
   const [initialized, setInitialized] = useState(false);
@@ -97,6 +120,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
       setYtSecrets(data.settings?.youtube_client_secrets ? JSON.stringify(data.settings.youtube_client_secrets, null, 2) : '');
       setDescriptionText(data.settings?.description_defaults?.text || '');
       setDescriptionTemplate(data.settings?.description_defaults?.template || '');
+      setPostizKey(data.settings?.postiz_api_key || '');
+      setPostizUrl(data.settings?.postiz_api_url || '');
+      setPostizText(data.settings?.postiz_text_template || '');
+      setPostizComment(data.settings?.postiz_comment_template || '');
       setInitialized(true);
     }
   }, [data]);
@@ -126,10 +153,45 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
     }
   }, [debouncedYtSecrets, ytSecrets, data, initialized, saveSettings]);
 
+  // Both Postiz fields are saved the way the Gemini key is, and both
+  // invalidate the status: a new key or a new host is a different account, and
+  // the channel list below has to be re-read against it.
+  useEffect(() => {
+    if (!initialized || !data || debouncedPostizKey !== postizKey) return;
+    if (debouncedPostizKey !== (data.settings?.postiz_api_key || '')) {
+      saveSettings({ settings: { postiz_api_key: debouncedPostizKey } });
+      queryClient.invalidateQueries({ queryKey: ['postizStatus'] });
+    }
+  }, [debouncedPostizKey, postizKey, data, initialized, saveSettings, queryClient]);
+
+  useEffect(() => {
+    if (!initialized || !data || debouncedPostizUrl !== postizUrl) return;
+    if (debouncedPostizUrl !== (data.settings?.postiz_api_url || '')) {
+      saveSettings({ settings: { postiz_api_url: debouncedPostizUrl } });
+      queryClient.invalidateQueries({ queryKey: ['postizStatus'] });
+    }
+  }, [debouncedPostizUrl, postizUrl, data, initialized, saveSettings, queryClient]);
+
   if (isLoading) return <div style={{ padding: 'var(--space-md)', fontWeight: 'bold', textTransform: 'uppercase' }}>Loading settings...</div>;
 
   const settings = data?.settings || { gemini_api_key: '', youtube_client_secrets: null, theme: 'light' as const, video_defaults: { resolution: 'keep original', aspect_ratio: 'keep original' } };
   const pipelineConfig = data?.pipeline_config || { execution_order: [], steps: {} };
+
+  // Which channels an import files against, and how it is changed. Saved on the
+  // click rather than behind a Save button: it is one boolean per channel, and
+  // every other control on this page saves itself too.
+  //
+  // Nothing is ticked until the user ticks it. An empty list means no import
+  // happens — not "all of them", which is what it used to mean and which sent
+  // a project's clips to every account connected to Postiz.
+  const selectedChannels: string[] = settings.postiz_channels || [];
+  const channelSettings = settings.postiz_channel_settings || {};
+  const toggleChannel = (id: string) => {
+    const next = selectedChannels.includes(id)
+      ? selectedChannels.filter((entry) => entry !== id)
+      : [...selectedChannels, id];
+    saveSettings({ settings: { postiz_channels: next } });
+  };
 
   const getSaveStatus = () => {
     if (updateMutation.isError) return { text: 'ERROR SAVING!', color: 'var(--error)' };
@@ -390,6 +452,264 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
           {!settings.youtube_client_secrets && (
             <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
               Add the client secrets above first.
+            </span>
+          )}
+        </div>
+      </section>
+
+      {/* Postiz: everywhere that is not YouTube. Clips are handed to the
+          scheduler the user already runs rather than published from here, so
+          this section configures a destination, not a second publisher. */}
+      <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+        <h2 style={{ margin: 0, fontSize: '1.2rem', textTransform: 'uppercase', fontWeight: 900 }}>Postiz</h2>
+        <p style={{ margin: 0, fontSize: '0.8rem', opacity: 0.8 }}>
+          Importing a clip cuts it afresh, sends the video to Postiz and writes the post
+          for each channel. Nothing is published: what arrives is a draft you open and send.
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+          <label htmlFor="postiz-api-key" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Postiz API Key:</label>
+          <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+            <input
+              id="postiz-api-key"
+              type={showPostizKey ? 'text' : 'password'}
+              autoComplete="off"
+              spellCheck={false}
+              value={postizKey}
+              onChange={(e) => setPostizKey(e.target.value)}
+              style={inputStyle}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPostizKey((v) => !v)}
+              aria-pressed={showPostizKey}
+              style={{
+                padding: 'var(--space-md)',
+                minHeight: '44px',
+                whiteSpace: 'nowrap',
+                fontSize: '0.8rem',
+              }}
+            >
+              {showPostizKey ? 'Hide' : 'Show'}
+            </button>
+          </div>
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            In Postiz under Settings, Public API.
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+          <label htmlFor="postiz-api-url" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Postiz URL:</label>
+          <input
+            id="postiz-api-url"
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="https://postiz.example.com"
+            value={postizUrl}
+            onChange={(e) => setPostizUrl(e.target.value)}
+            style={inputStyle}
+          />
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            {/* The address of the instance, not of its API: which path the API
+                lives under depends on whether it is self-hosted, and that is
+                not something anyone should have to know. */}
+            Your own instance, as you open it in a browser. Leave empty for Postiz cloud.
+            {postiz?.api_url ? ` Calling ${postiz.api_url}.` : ''}
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+          <label htmlFor="postiz-post-type" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>What an import makes:</label>
+          <select
+            id="postiz-post-type"
+            value={settings.postiz_post_type || 'draft'}
+            onChange={(e) => saveSettings({ settings: { postiz_post_type: e.target.value as 'draft' | 'schedule' | 'now' } })}
+            style={inputStyle}
+          >
+            {/* Draft first and by default: it is the only one of the three that
+                cannot reach an audience by accident. */}
+            <option value="draft">A draft, for you to send</option>
+            <option value="schedule">A scheduled post</option>
+            <option value="now">Posted immediately</option>
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+          <label htmlFor="postiz-per-day" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>How many land per day:</label>
+          <select
+            id="postiz-per-day"
+            value={String(settings.postiz_per_day ?? 0)}
+            onChange={(e) => saveSettings({ settings: { postiz_per_day: Number(e.target.value) } })}
+            style={inputStyle}
+          >
+            {/* Zero first because it is the default and what an import did
+                before there was a choice. */}
+            <option value="0">All on the same day</option>
+            <option value="1">1 per day</option>
+            <option value="2">2 per day</option>
+            <option value="3">3 per day</option>
+            <option value="4">4 per day</option>
+            <option value="6">6 per day</option>
+          </select>
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            A clip keeps its slot however it was imported, so re-importing one moves nothing.
+            Posts are spread between {settings.postiz_day_start_hour ?? 9}:00 and{' '}
+            {settings.postiz_day_end_hour ?? 21}:00.
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+          <label htmlFor="postiz-text" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>What each post says:</label>
+          <textarea
+            id="postiz-text"
+            value={postizText}
+            onChange={(e) => setPostizText(e.target.value)}
+            onBlur={() => {
+              if (postizText !== (data?.settings?.postiz_text_template || '')) {
+                saveSettings({ settings: { postiz_text_template: postizText } });
+              }
+            }}
+            placeholder={'{platform.post}\n\nFrom {project.source_title}'}
+            style={{ ...inputStyle, minHeight: '110px', fontFamily: 'monospace' }}
+          />
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            Leave empty and each channel gets what the model wrote for its platform.
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+          <label htmlFor="postiz-comment" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Comment under the post:</label>
+          <textarea
+            id="postiz-comment"
+            value={postizComment}
+            onChange={(e) => setPostizComment(e.target.value)}
+            onBlur={() => {
+              if (postizComment !== (data?.settings?.postiz_comment_template || '')) {
+                saveSettings({ settings: { postiz_comment_template: postizComment } });
+              }
+            }}
+            placeholder={'Full episode: {project.source_url}'}
+            style={{ ...inputStyle, minHeight: '70px', fontFamily: 'monospace' }}
+          />
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            {/* Why anyone wants this, said once: it is not obvious that the
+                link is better off out of the post itself. */}
+            Posted as a thread or first comment where the platform has one — most platforms show a
+            post less if it carries an outbound link. Left out when it renders empty.
+          </span>
+          <DescriptionFieldHelp extra={POSTIZ_FIELDS} />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem', minHeight: '44px' }}>
+            <input
+              type="checkbox"
+              // Default on: a configured Postiz is one somebody set up in order
+              // to send things to it, and a clip that is ready an hour before
+              // its draft appears helped nobody.
+              checked={settings.postiz_import_on_render !== false}
+              onChange={(e) => saveSettings({ settings: { postiz_import_on_render: e.target.checked } })}
+            />
+            Import each clip as soon as it is cut
+          </label>
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            The first clip's draft appears while the last one is still encoding. Off, clips are
+            filed by the Postiz Drafts step instead, once you run it.
+          </span>
+        </div>
+
+        {/* Which accounts. Read from Postiz rather than typed, because the ids
+            a post is addressed by are not something anyone knows by heart. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)', border: 'var(--border)', padding: 'var(--space-sm)' }}>
+          <label style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Channels:</label>
+          {!postiz?.configured && (
+            <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>
+              Add an API key above to see the connected channels.
+            </span>
+          )}
+          {postiz?.configured && postiz.error && (
+            <span role="alert" style={{ fontSize: '0.8rem', color: 'var(--error)', fontWeight: 'bold', overflowWrap: 'anywhere' }}>
+              {postiz.error}
+            </span>
+          )}
+          {postiz?.channels?.length === 0 && (
+            <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>
+              This Postiz account has no channels connected yet.
+            </span>
+          )}
+          {(postiz?.channels || []).map((channel) => (
+            <label
+              key={channel.id}
+              style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', fontSize: '0.9rem', minHeight: '44px' }}
+            >
+              <input
+                type="checkbox"
+                checked={selectedChannels.includes(channel.id)}
+                onChange={() => toggleChannel(channel.id)}
+              />
+              <span>
+                {channel.name || channel.id}
+                {channel.identifier ? ` (${channel.identifier})` : ''}
+                {channel.disabled ? ' — disabled in Postiz' : ''}
+              </span>
+            </label>
+          ))}
+          {/* Some platforms need something only you can supply — a Discord
+              channel id, a subreddit. Postiz refuses the post without it and
+              says which field it wanted, and that message appears on the clip.
+              This is where the answer goes. Free-form on purpose: which field
+              each platform wants is Postiz's business and changes with it, so
+              this app does not keep a copy of that list. */}
+          {selectedChannels.length > 0 && (
+            <details style={{ fontSize: '0.8rem' }}>
+              <summary style={{ cursor: 'pointer', minHeight: '44px', display: 'flex', alignItems: 'center' }}>
+                Extra settings for a channel
+              </summary>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)' }}>
+                {(postiz?.channels || [])
+                  .filter((channel) => selectedChannels.includes(channel.id))
+                  .map((channel) => (
+                    <div key={channel.id} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+                      <label htmlFor={`postiz-extra-${channel.id}`} style={{ fontWeight: 'bold' }}>
+                        {channel.name || channel.id}
+                        {channel.identifier ? ` (${channel.identifier})` : ''}
+                      </label>
+                      <input
+                        id={`postiz-extra-${channel.id}`}
+                        type="text"
+                        placeholder="field=value, e.g. channel=123456789012345678"
+                        defaultValue={Object.entries(channelSettings[channel.id] || {})
+                          .map(([key, value]) => `${key}=${value}`)
+                          .join(', ')}
+                        onBlur={(e) => {
+                          // Saved on leaving the box rather than per keystroke:
+                          // half a field name is not a setting.
+                          const entries = e.target.value
+                            .split(',')
+                            .map((pair) => pair.split('='))
+                            .filter((pair) => pair.length === 2 && pair[0].trim());
+                          saveSettings({
+                            settings: {
+                              postiz_channel_settings: {
+                                ...channelSettings,
+                                [channel.id]: Object.fromEntries(
+                                  entries.map(([key, value]) => [key.trim(), value.trim()])
+                                ),
+                              },
+                            },
+                          });
+                        }}
+                        style={inputStyle}
+                      />
+                    </div>
+                  ))}
+              </div>
+            </details>
+          )}
+          {(postiz?.channels?.length ?? 0) > 0 && selectedChannels.length === 0 && (
+            <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+              Nothing ticked, so nothing is imported. Clips only go where you say.
             </span>
           )}
         </div>

@@ -15,6 +15,7 @@ from backend.src.dataclasses.data import (
     CaptionSettings,
     DescriptionSettings,
     OverlayText,
+    PostizSettings,
     Project,
     ThumbnailSettings,
 )
@@ -35,6 +36,16 @@ from backend.src.services.thumbnailer import SourceVideoMissingError, Thumbnaile
 from backend.src.services.uploader import (
     ClipNotPublishedError,
     UploadInProgressError,
+)
+from backend.src.infrastructure.postiz_client import (
+    MissingPostizCredentialsError,
+    PostizClient,
+    PostizError,
+    normalize_api_url,
+)
+from backend.src.services.postiz_publisher import (
+    NoPostizChannelsError,
+    PostizImportInProgressError,
 )
 from backend.src.services.description_builder import (
     DEFAULT_TEMPLATE,
@@ -235,6 +246,68 @@ class SimpleHandler(BaseHTTPRequestHandler):
             status["consent"] = youtube_consent.status()
         self.send_json_response(status)
 
+    def handle_get_postiz_status(self):
+        """Whether Postiz is configured, and what it would import into.
+
+        One request rather than two, because the page asks the same question
+        both answer: is this ready to use. `channels` is only present when the
+        key works — a listing is the cheapest proof of that — and its absence
+        with a `error` is what the settings page shows.
+        """
+        api_url = settings_manager.get("postiz_api_url")
+        status = {
+            "configured": bool(settings_manager.get("postiz_api_key")),
+            "api_url": normalize_api_url(api_url),
+            "selected_channels": settings_manager.get("postiz_channels") or [],
+            "post_type": settings_manager.get("postiz_post_type") or "draft",
+        }
+        if not status["configured"]:
+            self.send_json_response(status)
+            return
+
+        try:
+            status["channels"] = PostizClient().list_integrations()
+        except PostizError as e:
+            # Not an HTTP error: the question "is Postiz reachable" was
+            # answered, and the answer is no. The page draws that.
+            status["error"] = str(e)
+        except Exception as e:
+            logger.exception("Could not read the Postiz channels")
+            status["error"] = f"Could not read the Postiz channels: {e}"
+        self.send_json_response(status)
+
+    def handle_get_postiz_sync(self):
+        """Asks Postiz what became of this project's posts and answers with it.
+
+        A GET that writes, like `/publication` is for YouTube and for the same
+        reason: the question and the correction are the same act. Nothing tells
+        this application when a draft it filed goes out, so asking is the only
+        way a published clip ever stops reading as "waiting in Postiz".
+        """
+        project_id = self.path.split('/')[2]
+        try:
+            project = Project(project_id)
+        except Exception:
+            self.send_cors_error(404, "Project not found")
+            return
+
+        publisher = pipeline_orchestrator.services.get("postiz")
+        if publisher is None:
+            self.send_cors_error(500, "No Postiz service is configured.")
+            return
+
+        try:
+            self.send_json_response(publisher.sync(project))
+        except MissingPostizCredentialsError as e:
+            self.send_cors_error(401, str(e))
+        except PostizError as e:
+            # Postiz being unreachable is not an error of this project's: the
+            # records stand, and the page says it could not ask.
+            self.send_json_response({"checked": False, "reason": str(e), "clips": {}})
+        except Exception as e:
+            logger.exception(f"Postiz sync failed for project={project_id}")
+            self.send_cors_error(500, f"Could not ask Postiz: {str(e)}")
+
     def handle_post_youtube_connect(self):
         """Starts a consent and hands back the URL for the user to open.
 
@@ -372,6 +445,12 @@ class SimpleHandler(BaseHTTPRequestHandler):
         # nothing still gets an entry with `since` in it, which is what lets the
         # page say how long it has been running rather than only that it is.
         statuses["activity"] = pipeline_orchestrator.activity(project_id)
+        # Why the failed steps failed. A red badge on its own sends the user to
+        # the backend log for something as ordinary as an API key nobody has
+        # filled in; this is the sentence that saves that trip. Only failures
+        # carry one, and a step clears its own the moment it runs again.
+        step_errors = dict(project.step_errors)
+        statuses["step_errors"] = step_errors
         # The clock `since` was taken from. Sent so the page measures elapsed
         # time against the same clock rather than against the browser's, which
         # can be minutes off and would report a step as running for -3 minutes.
@@ -388,6 +467,29 @@ class SimpleHandler(BaseHTTPRequestHandler):
             step_name = k[len(project_id) + 1:]
             if step_name in pipeline_config['steps']:
                 statuses[step_name] = "running"
+
+        # A step that says it is running with nothing running it. "running" is
+        # written to the file by the step and cleared by the step, so anything
+        # that stops in between — the process being restarted, a crash, an
+        # exception raised before the status could be moved — leaves that word
+        # on disk forever. The page then shows a step that never finishes and
+        # whose button offers to stop something that is not there.
+        #
+        # Corrected on the way out rather than written back: this is a fact
+        # about this process, not about the project, and a second backend
+        # reading the same project must not decide the first one's work has
+        # stopped.
+        for step_name in pipeline_config['steps']:
+            if statuses.get(step_name) != "running":
+                continue
+            if f"{project_id}_{step_name}" in pipeline_orchestrator.active_processes:
+                continue
+            statuses[step_name] = "error"
+            step_errors.setdefault(
+                step_name,
+                "This step stopped without finishing — the server was restarted, or it "
+                "fell over. The backend log has the reason. Run it again.",
+            )
 
         # Check dependencies for locked steps
         for step_name, config in pipeline_config['steps'].items():
@@ -757,6 +859,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
         elif self.path == '/pipeline/config': self.handle_get_config()
         elif self.path == '/settings': self.handle_get_settings()
         elif self.path == '/youtube/status': self.handle_get_youtube_status()
+        elif self.path == '/postiz/status': self.handle_get_postiz_status()
         elif self.path == '/projects': self.handle_get_projects()
         elif self.path.startswith('/projects/static/'): self.handle_get_project_file()
         elif self.path.startswith('/project/') and self.path.endswith('/execution_status'):
@@ -773,6 +876,8 @@ class SimpleHandler(BaseHTTPRequestHandler):
             self.handle_get_clip_captions()
         elif self.path.startswith('/project/') and urlparse(self.path).path.endswith('/publication'):
             self.handle_get_clip_publication()
+        elif self.path.startswith('/project/') and urlparse(self.path).path.endswith('/postiz/sync'):
+            self.handle_get_postiz_sync()
         elif self.path.startswith('/project/') and urlparse(self.path).path.endswith('/description'):
             self.handle_get_clip_description()
         elif self.path.startswith('/project/') and urlparse(self.path).path.endswith('/thumbnail'):
@@ -900,6 +1005,44 @@ class SimpleHandler(BaseHTTPRequestHandler):
             logger.exception(f"Thumbnail upload failed for project={project_id} clip={clip_id}")
             self.send_cors_error(500, f"Could not set the thumbnail: {str(e)}")
 
+    def handle_post_postiz_clip(self):
+        """Cuts one clip afresh and files it in Postiz.
+
+        Answers as soon as the job is registered, like the YouTube upload does
+        and for the same reason: the import begins with an encode, which
+        outlives a browser request. The key returned is what the page watches on
+        /active_processes; the outcome is on the highlight when it leaves.
+
+        Unlike the upload this is not irreversible — what it makes is a draft on
+        a calendar the user owns — so there is no confirmation in front of it.
+        """
+        parts = urlparse(self.path).path.split('/')
+        try:
+            project_id, clip_id = parts[2], int(parts[4])
+        except (IndexError, ValueError):
+            self.send_cors_error(404, "No clip at that index")
+            return
+
+        try:
+            job = pipeline_orchestrator.import_clip_to_postiz(project_id, clip_id)
+            self.send_json_response({"status": "started", "job": job})
+        except FileNotFoundError:
+            self.send_cors_error(404, "Project not found")
+        except IndexError:
+            self.send_cors_error(404, "No clip at that index")
+        except (PostizImportInProgressError, UploadInProgressError,
+                ClipRegenerationInProgressError) as e:
+            self.send_cors_error(409, str(e))
+        except MissingPostizCredentialsError as e:
+            self.send_cors_error(401, str(e))
+        except NoPostizChannelsError as e:
+            self.send_cors_error(400, str(e))
+        except PostizError as e:
+            self.send_cors_error(502, str(e))
+        except Exception as e:
+            logger.exception(f"Postiz import failed for project={project_id} clip={clip_id}")
+            self.send_cors_error(500, f"Postiz import failed: {str(e)}")
+
     def handle_post_regenerate_clip(self):
         """Re-cuts one clip with whatever its settings now say.
 
@@ -1001,6 +1144,15 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     **project.settings.description.to_dict(),
                     **(data['description'] or {}),
                 })
+            if 'postiz' in data:
+                # Merged, like the description: the panel saves one field at a
+                # time. `channels` survives being set back to null — an explicit
+                # null is still a key in the patch, and it is what "follow the
+                # application settings" is stored as.
+                project.settings.postiz = PostizSettings.from_dict({
+                    **project.settings.postiz.to_dict(),
+                    **(data['postiz'] or {}),
+                })
             if 'captions' in data:
                 # Merged rather than replaced: the styler sends one changed
                 # field at a time as the user drags a slider.
@@ -1085,6 +1237,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
         elif self.path == '/project/step': self.handle_post_step()
         elif self.path.endswith('/thumbnail/upload'): self.handle_post_upload_thumbnail()
         elif self.path.endswith('/upload'): self.handle_post_upload_clip()
+        elif self.path.endswith('/postiz'): self.handle_post_postiz_clip()
         elif self.path.endswith('/regenerate'): self.handle_post_regenerate_clip()
         elif urlparse(self.path).path.endswith('/thumbnail'): self.handle_post_thumbnail()
         elif self.path == '/settings':

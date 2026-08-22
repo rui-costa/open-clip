@@ -144,12 +144,55 @@ A line whose fields are all empty is left out, so a project with no original vid
 
 Each clip's detail page shows the finished description under **YouTube description**. It is rendered by the same builder the uploader uses, so it is the exact text that gets published.
 
-## 8. Configuring Settings
+## 8. Posting Everywhere Else: Postiz
+YouTube is the one platform this app publishes to itself. Everything else goes through [Postiz](https://postiz.com) — the open-source scheduler you either self-host or use in the cloud — which already owns the calendar, the per-platform settings and the previews.
+
+**Import to Postiz**, on a clip's detail page under Actions, cuts the clip afresh, sends the video to Postiz and writes the post for every channel you have chosen. It is the same job the YouTube upload is: it re-renders first, so what arrives is the clip as the page shows it, it reports that it is running, and it keeps going if you leave the page.
+
+What it makes is a **draft**. Nothing reaches an audience: the clip is sitting on your own calendar, written and attached, waiting for you to read it and press send. That is why the button has no confirmation in front of it and why importing twice is safe — it makes a second draft rather than doing anything you cannot undo. When it lands, the clip says **Waiting in Postiz** with a link to the calendar.
+
+Opening the project asks Postiz what has happened since, so a clip does not go on claiming to be waiting after you have sent it. A clip that went out says **Published from Postiz** and links to the post on the platform itself rather than to the calendar; one still due says **Scheduled in Postiz**; one that failed to send says so. It is worth reading before importing again — a second import of something already live is a duplicate post, not a correction.
+
+There is one thing Postiz will not tell anybody, and it shapes the rest: its API returns no drafts at all. So a post that has not been sent looks exactly like a post that was deleted, and neither this app nor the page will guess between them — an unsent clip keeps saying **Waiting in Postiz**, and nothing is ever cleared on the strength of Postiz's silence. That is the opposite of the YouTube check, where a video that has gone does clear the record, because there the silence is an answer.
+
+Each channel says what the model wrote for its platform: the X post goes to X, the LinkedIn post to LinkedIn, the Reddit post to Reddit. A channel the model writes nothing specific for — a Facebook page, a Mastodon account — gets the clip's full description, rendered through the same template the YouTube upload uses.
+
+**Postiz** in Settings holds three things:
+
+1. **Postiz API Key**: in Postiz under **Settings → Public API**. Nothing else on the panel is asked until this is saved.
+2. **Postiz URL**: your own instance, as you open it in a browser. Leave it empty for Postiz cloud.
+3. **Channels**: read from Postiz once the key works, so you tick accounts rather than typing ids. Nothing is ticked for you, and ticking none means nothing is imported — clips only go where you said they should.
+
+Some platforms need something only you can supply: a Discord channel id, a subreddit, a Pinterest board. Postiz refuses a post without it and says which field it wanted, and that sentence lands on the clip. **Extra settings for a channel**, under the channel list, is where the answer goes — `channel=123456789012345678` for a Discord, one `field=value` per channel. Which fields a platform wants is Postiz's business, so this app does not keep a list of them; it passes yours through and repeats what Postiz says about the rest.
+
+One Postiz account serves every project on the machine, and the projects are not one thing — a company's podcast and a side project are cut on the same install and must not land in the same accounts. So Settings is the default and a project may disagree: **Postiz** in the project's settings menu, beside Description, holds this project's own channels and its own choice of draft, scheduled or sent.
+
+A project follows Settings until you tick something there; from that moment it keeps its own list, and changing the default no longer moves it. **Follow Settings again** puts it back. Ticking nothing in a project that has its own list means that project imports nowhere — which is a choice, and different from never having made one.
+
+All the channels for one clip travel in a single post, so a channel Postiz refuses would take the others with it. It does not: the refused ones are dropped, the rest are filed, and the clip says which were left out and why.
+
+The video is uploaded once. It goes to Postiz before the post is created, so a post that fails — a channel missing a setting, a rate limit — would otherwise leave the file uploaded and send it again on the next attempt. Instead the clip remembers what Postiz stored, and reuses it for as long as the video is the same one. Re-cut the clip into something different and it is sent again; press **Import to Postiz** twice on an unchanged clip and it is not.
+
+**What an import makes** is the same panel's one consequential setting. It is *a draft, for you to send* by default. *A scheduled post* files it against a time an hour out, and *Posted immediately* sends it — which, unlike everything else here, does reach an audience.
+
+Clips do not queue up waiting for each other. Once Postiz is configured, each clip is filed the moment the clipper finishes cutting it — so the first draft is on the calendar while the last clip is still encoding, rather than an hour later. **Import each clip as soon as it is cut** in Settings turns that off, leaving the filing to the step below.
+
+There is also a **Postiz Drafts** step in the pipeline, next to Clips and Upload. It does the same thing to every clip in the project in one run, skipping any clip already filed since its last cut — so running it after a Clips run does not put a second identical draft on the calendar. It checks the key, the URL and the channels before it cuts anything, so a project with Postiz unconfigured fails in the first second and says so under the pipeline row rather than sitting on **running**.
+
+## 9. Configuring Settings
 You can customize the application's behavior in the **Settings Page**.
 
 ![Settings Page](../images/settings_page.png)
 
-Adjust your configuration (API keys, models, etc.). Changes made here are saved directly to the backend `settings.json` file.
+Adjust your configuration (API keys, models, etc.). Changes made here are written to one of three files under `backend/config/`, picked by what the setting is:
+
+| File | Holds | In git |
+| --- | --- | --- |
+| `settings.json` | Application settings: theme, model, codec, log level, pipeline and caption defaults. | Yes |
+| `user_settings.json` | Your own content: the default description, the Postiz post and comment templates, and the Postiz server URL. | No |
+| `secrets.json` | Credentials and account identifiers: the Gemini API key, the YouTube client secrets, the Postiz API key and channel IDs. | No |
+
+The split exists so the repository can be shared without carrying your descriptions, your self-hosted URLs or your keys. Both ignored files are created on first run and are mounted into the container, so they survive a rebuild.
 
 ### Connecting a YouTube channel
 Publishing needs two separate things. **YouTube Client Secrets (JSON)** is the OAuth client for your own Google Cloud project — which application is asking. **YouTube Channel → Connect Channel** is the channel's consent — who it may act for. The button opens Google in a new tab; when you finish there, the panel says the channel is connected and the token is written to `backend/youtube_credentials/`.

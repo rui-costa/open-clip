@@ -32,6 +32,13 @@
         "highlights"
       ],
       "auto_run": false
+    },
+    "postiz": {
+      "command": "postiz",
+      "depends_on": [
+        "highlights"
+      ],
+      "auto_run": false
     }
   },
   "execution_order": [
@@ -39,6 +46,7 @@
     "highlights",
     "metadata",
     "clipper",
-    "upload"
+    "upload",
+    "postiz"
   ]
 }

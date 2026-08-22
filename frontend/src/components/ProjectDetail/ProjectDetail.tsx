@@ -1,5 +1,5 @@
 import React, { useId } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PipelineActivity, PipelineController } from '../PipelineController/PipelineController';
 import type { StepStatus } from '../PipelineController/PipelineController';
 import { ClipManager } from '../ClipManagement/ClipManager';
@@ -8,6 +8,7 @@ import {
   getAspectRatioMap,
   getExecutionStatus,
   getSourceVideoUrl,
+  syncPostiz,
   type ClipPreview,
   type Highlight,
   type ProjectMetadata,
@@ -75,6 +76,32 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
   // copies drift apart mid-run.
   const displayMetadata = metadata;
 
+  // What Postiz has done with the drafts this project filed. Nothing tells this
+  // application when one is sent, so a clip that went out an hour ago reads as
+  // "waiting in Postiz" until Postiz is asked — and asking is also what records
+  // the answer.
+  //
+  // Only for a project that has something in Postiz, and not on every remount:
+  // the answer changes on Postiz's side, not here.
+  const queryClient = useQueryClient();
+  const hasPostizPosts = (metadata.highlights ?? []).some((h) => h.postiz_post_id);
+  const { data: postizSync } = useQuery({
+    queryKey: ['postizSync', metadata.project_id],
+    queryFn: () => syncPostiz(metadata.project_id),
+    enabled: hasPostizPosts,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
+  React.useEffect(() => {
+    // The sync writes what it learned onto the clips, so the project on screen
+    // is now the stale copy.
+    if (postizSync?.checked) {
+      queryClient.invalidateQueries({ queryKey: ['project', metadata.project_id] });
+      queryClient.invalidateQueries({ queryKey: ['projectMetadata', metadata.project_id] });
+    }
+  }, [postizSync, metadata.project_id, queryClient]);
+
   // execution_status carries a `progress` object alongside the per-step
   // strings, which is the only per-clip feedback available during a run.
   const clipProgress = allStatuses?.progress as unknown as
@@ -87,6 +114,11 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
     | Record<string, StepActivity>
     | undefined;
   const serverNow = allStatuses?.now as unknown as number | undefined;
+  // And why the failed steps failed, which unlike `activity` survives the step
+  // ending — it is written on the project rather than held for the run.
+  const stepErrors = allStatuses?.step_errors as unknown as
+    | Record<string, string>
+    | undefined;
 
   const sourceUrl = displayMetadata.files?.original_file
     ? getSourceVideoUrl(displayMetadata.project_id, displayMetadata.files.original_file)
@@ -134,6 +166,13 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
         // What a finished upload job is judged against: it leaves
         // /active_processes whether or not it published anything.
         uploadedAt: h.uploaded_at ?? null,
+        // The draft waiting in Postiz, and what a finished import job is judged
+        // against — it leaves /active_processes whether or not it filed one.
+        postizUrl: h.postiz_url ?? null,
+        postizImportedAt: h.postiz_imported_at ?? null,
+        // What the sync last heard. The card offers to import again either way,
+        // but a clip that is already out is a duplicate rather than a fix.
+        postizState: h.postiz_state ?? null,
         original_start: h.start,
         original_end: h.end,
         // The card is named by what the clip would be published as; the hook is
@@ -160,7 +199,12 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
   // rebuild this list forty times for a run in which the statuses changed
   // three times.
   const statusKey = (pipelineConfig?.execution_order || [])
-    .map((stepName) => allStatuses?.[stepName] ?? 'locked')
+    .map((stepName) => {
+      const status = allStatuses?.[stepName] ?? 'locked';
+      // The reason a step failed is part of what this list draws, so a run
+      // that fails differently the second time has to rebuild it.
+      return `${status}:${stepErrors?.[stepName] ?? ''}`;
+    })
     .join('|');
 
   const steps = React.useMemo(
@@ -173,6 +217,10 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
         // A locked step can now say what is blocking it instead of just that it
         // is blocked. The config already carries this; nothing read it before.
         dependsOn: (pipelineConfig?.steps?.[stepName]?.depends_on ?? []).map(stepLabel),
+        // Why it stopped, for a step that says. Read from the project rather
+        // than from the transient activity notes: those are dropped when the
+        // step ends, which is exactly when the reason starts mattering.
+        error: stepErrors?.[stepName],
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- statusKey is
     // exactly the part of allStatuses this reads; see above.

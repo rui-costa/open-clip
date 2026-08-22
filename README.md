@@ -50,7 +50,11 @@ Ensure you have [Docker](https://www.docker.com/) and [Docker Compose](https://d
 
 5. Add your Gemini API key on the app's Settings page. It is stored in
    `backend/config/secrets.json`, which is mounted into the container, so it
-   survives a rebuild and is never baked into the image.
+   survives a rebuild and is never baked into the image. Anything else personal
+   you set there — the default description, the Postiz templates and server URL
+   — goes to `backend/config/user_settings.json`. Both files are git-ignored;
+   `backend/config/settings.json` holds only the application settings and is
+   tracked, so cloning this repository never brings someone else's content.
 
 6. [Learn how to use the application in our User Guide →](docs/USER_GUIDE.md)
 
@@ -77,6 +81,7 @@ reservation.
 *   **Automated Clipping**: Efficient video splitting and processing.
 *   **Animated Captions**: Word-by-word karaoke subtitles built from the transcript, styled and previewed in the browser before they are burned into a clip.
 *   **Shorts Thumbnails**: Every clip shows the still it would be published with — by default its first frame, with the clip's title drawn on and no subtitles — drawn live in the browser, with any frame choosable instead, subtitles shown and extra text added. The picture itself is rendered at upload.
+*   **Postiz Import**: Send a finished clip — or a whole project — to [Postiz](https://postiz.com) as a draft post per connected channel, video attached and text already written, ready to read and send. YouTube is published from here; everything else goes through the scheduler you already run.
 *   **Metadata Management**: Track project details via JSON metadata.
 *   **Containerized Workflow**: Simple setup using Docker.
 

@@ -4,16 +4,19 @@ import logging
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Callable, List, Dict, Any, Optional, Tuple
 from backend.src.dataclasses.data import Highlight, Project, Clip
+from backend.src.infrastructure.progress import report
 from backend.src.infrastructure.video_engine import OpenCVVideoEngine
 from backend.src.services.captions import CaptionService
 
 logger = logging.getLogger(__name__)
 
 class Clipper:
-    def __init__(self, caption_service: CaptionService = None):
+    def __init__(self, caption_service: CaptionService = None,
+                 on_clip_rendered: Optional[Callable[[Project, int], None]] = None):
         self.captions = caption_service or CaptionService()
+        self.on_clip_rendered = on_clip_rendered
 
     def reset_metadata(self, project: Project) -> None:
         """Clears the clips/ directory and resets clip state."""
@@ -125,8 +128,11 @@ class Clipper:
                     input_path, project.settings.aspect_ratio, project.settings.resolution
                 )
 
+            total = len(project.highlights)
             for i, short in enumerate(project.highlights):
+                report(f"Cutting clip {i + 1} of {total}")
                 self._render_highlight(project, engine, input_path, clips_dir, i, short, dimensions)
+                self._announce_clip(project, i)
 
             logger.info(f"Clipper completed for project={project.project_id}")
             self.end_service(project)
@@ -135,6 +141,16 @@ class Clipper:
             logger.error(f"Error executing clipper: {e}")
             project.set_step_status("clipper", "error")
             return []
+
+    def _announce_clip(self, project: Project, index: int) -> None:
+        """Hands a finished clip to whoever asked to hear about it.
+        """
+        if self.on_clip_rendered is None:
+            return
+        try:
+            self.on_clip_rendered(project, index)
+        except Exception as e:
+            logger.warning(f"Handler for clip {index} of {project.project_id} failed: {e}")
 
     def render_one(self, project: Project, index: int) -> Dict[str, Any]:
         """Re-cuts a single clip, leaving every other clip on disk alone.

@@ -260,6 +260,39 @@ export type Highlight = {
    *  The upload runs in the background, so this is where its outcome is read
    *  from rather than from the response to the click that started it. */
   upload_error?: string | null;
+  /** The Postiz post this clip was imported as, once it has been. Separate from
+   *  the YouTube record because they are different destinations for the same
+   *  clip: YouTube is published from here, Postiz is a draft somebody still has
+   *  to send, and a clip can legitimately be in both. */
+  postiz_post_id?: string | null;
+  postiz_url?: string | null;
+  postiz_imported_at?: string | null;
+  /**
+   * Which channels the last import filed against, and what Postiz has since
+   * done with each. `state` and `url` appear only after a sync, and `url` is
+   * the post on the platform itself — the one link worth following once
+   * something is actually out.
+   */
+  postiz_channels?: {
+    id: string;
+    name?: string;
+    platform?: string;
+    state?: string | null;
+    url?: string | null;
+    /** Added to the post in Postiz rather than by this app. */
+    added_in_postiz?: boolean;
+  }[];
+  /**
+   * What Postiz has done with the post: `published`, `scheduled`, `error`, or
+   * absent for one it will not talk about — which is every draft, because its
+   * public API returns none. Absent therefore means "not sent, or deleted, and
+   * Postiz will not say which", never "gone".
+   */
+  postiz_state?: string | null;
+  postiz_synced_at?: string | null;
+  /** Why the last import filed nothing, or absent when it worked. Read the same
+   *  way `upload_error` is: the import runs in the background. */
+  postiz_error?: string | null;
 };
 
 /**
@@ -275,6 +308,25 @@ export type DescriptionSettings = {
   source_title: string;
   text: string;
   template: string;
+};
+
+/**
+ * Where one project's clips are imported, when it differs from the app's.
+ *
+ * `channels` is null while the project has no opinion and follows Settings —
+ * which is not the same as `[]`, a project that has chosen to import nowhere.
+ * `channel_settings` is layered over the application's per channel, so a
+ * project can post to a different Discord channel without restating the rest.
+ */
+export type PostizProjectSettings = {
+  channels: string[] | null;
+  post_type: 'draft' | 'schedule' | 'now' | null;
+  channel_settings: Record<string, Record<string, string>>;
+  /** How many of this project's clips land per day. 0 is all at once, null follows Settings. */
+  per_day: number | null;
+  /** What each post says, and what goes under it. Empty follows Settings. */
+  text_template: string;
+  comment_template: string;
 };
 
 /**
@@ -317,6 +369,8 @@ export type ProjectMetadata = {
      * about how the project is reviewed rather than about one clip.
      */
     clip_preview?: ClipPreview;
+    /** Where this project's clips are imported, when it differs from the app's. */
+    postiz?: PostizProjectSettings;
   };
   files?: {
     original_file?: string;
@@ -340,6 +394,34 @@ export type SettingsResponse = {
     // caption defaults these are read at upload time, so editing them changes
     // what existing projects publish.
     description_defaults?: { text?: string; template?: string };
+    // Where clips are imported to be posted from, and how. The key is a secret
+    // and comes back the way the Gemini key does; the rest is plain settings.
+    postiz_api_key?: string;
+    postiz_api_url?: string;
+    // Which channels an import files against. Empty means nothing is imported:
+    // posting somewhere is a decision, not something to infer from an account
+    // being connected to Postiz.
+    postiz_channels?: string[];
+    // Anything a platform needs that only the user knows — a Discord channel
+    // id, a subreddit — keyed by the channel's own id.
+    postiz_channel_settings?: Record<string, Record<string, string>>;
+    // What an import makes. `draft` — the default — reaches nobody.
+    postiz_post_type?: 'draft' | 'schedule' | 'now';
+    // Whether each clip is filed the moment the clipper finishes cutting it,
+    // rather than in one pass at the end of the project. Default on.
+    postiz_import_on_render?: boolean;
+    postiz_schedule_offset_minutes?: number;
+    // How many clips land per day. 0 — the default — is all of them at once.
+    postiz_per_day?: number;
+    // The hours a day's posts are spread between, first and last.
+    postiz_day_start_hour?: number;
+    postiz_day_end_hour?: number;
+    // What every post says, in the same template language the YouTube
+    // description uses. Empty means the model's words for that platform.
+    postiz_text_template?: string;
+    // What goes in the comment under each post. The usual reason is the link:
+    // platforms bury a post that carries an outbound URL.
+    postiz_comment_template?: string;
   };
   pipeline_config: {
     execution_order: string[];
@@ -597,6 +679,32 @@ export const getClipPublication = async (
 export const getStudioEditUrl = (videoId: string) =>
   `https://studio.youtube.com/video/${videoId}/edit`;
 
+/**
+ * What Postiz says became of this project's posts, per clip index.
+ *
+ * `checked: false` means it could not be asked — no key, no network, nothing
+ * filed yet — and carries the reason. `known: false` on a clip means Postiz
+ * would not say: its public API returns no drafts at all, so a post that is
+ * absent has either not gone out or has been deleted, and neither this app nor
+ * the page may claim which.
+ */
+export type PostizSync = {
+  checked: boolean;
+  reason?: string;
+  synced_at?: string;
+  clips: Record<string, { state: string | null; known: boolean }>;
+};
+
+/**
+ * Asks Postiz what became of the drafts, and records it on the clips.
+ *
+ * Nothing tells this application when a draft is sent, so a clip that went out
+ * an hour ago reads as "waiting in Postiz" until this is called. A GET that
+ * writes, like the YouTube `publication` check: asking is also the correction.
+ */
+export const syncPostiz = async (projectId: string): Promise<PostizSync> =>
+  apiRequest<PostizSync>(`/project/${projectId}/postiz/sync`);
+
 export const getSettings = async () => {
   return apiRequest('/settings');
 };
@@ -687,6 +795,59 @@ export const uploadClip = async (
   });
 };
 
+export type PostizChannel = {
+  id: string;
+  name?: string;
+  /** The platform Postiz posts to — `x`, `linkedin`, `youtube`, … */
+  identifier?: string;
+  picture?: string;
+  /** Postiz will not send from this channel; its authorisation has lapsed. */
+  disabled?: boolean;
+};
+
+export type PostizStatus = {
+  /** Whether an API key has been saved. Nothing else here is asked without one. */
+  configured: boolean;
+  api_url: string;
+  /** The channels an import goes to. Empty means no import happens at all. */
+  selected_channels: string[];
+  post_type: 'draft' | 'schedule' | 'now';
+  /** Present only when the key worked — the listing is what proves it did. */
+  channels?: PostizChannel[];
+  /** Why the channels could not be read: a wrong key, or an unreachable host. */
+  error?: string;
+};
+
+/**
+ * Whether Postiz is configured, and which channels a clip would be imported to.
+ *
+ * One request rather than two, because "is the key right" and "what is
+ * connected" have the same answer: a listing that worked.
+ */
+export const getPostizStatus = async (): Promise<PostizStatus> => {
+  return apiRequest('/postiz/status');
+};
+
+/**
+ * Cuts one clip afresh and files it in Postiz as a post ready to send.
+ *
+ * Like `uploadClip` it re-renders first, so it is an encode and resolves when
+ * the job has been registered rather than when the post exists. Watch the key
+ * it returns on `/active_processes`, then read the highlight for `postiz_url`
+ * or `postiz_error`.
+ *
+ * Unlike `uploadClip` nothing reaches an audience: what this makes is a draft
+ * on the user's own calendar.
+ */
+export const importClipToPostiz = async (
+  projectId: string,
+  clipIndex: number
+): Promise<{ status: string; job: string }> => {
+  return apiRequest(`/project/${projectId}/clip/${clipIndex}/postiz`, {
+    method: 'POST',
+  });
+};
+
 /**
  * Puts a published clip's current thumbnail on its video.
  *
@@ -749,6 +910,7 @@ export const updateProjectSettings = async (
     overlay?: Partial<OverlayText>;
     description?: Partial<DescriptionSettings>;
     clip_preview?: ClipPreview;
+    postiz?: Partial<PostizProjectSettings>;
   }
 ) => {
   return apiRequest(`/project/${projectId}/settings`, {
