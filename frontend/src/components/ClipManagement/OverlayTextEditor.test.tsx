@@ -14,16 +14,19 @@ vi.mock('../../api', async (importOriginal) => ({
 beforeEach(() => {
   vi.mocked(updateClipOverlay).mockClear();
   stubFrameSize(400);
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 });
 
 /**
  * The dialog with the page's half of the contract around it: the draft lives
  * above it, which is what lets the picture behind redraw per keystroke.
  */
+let client: QueryClient;
+
 const Harness: React.FC<{ onClose?: () => void }> = ({ onClose = () => {} }) => {
   const [draft, setDraft] = useState<OverlayText | null>(null);
   return (
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={client}>
       <OverlayTextEditor
         projectId="test-project"
         clipIndex={0}
@@ -81,13 +84,67 @@ describe('OverlayTextEditor', () => {
     await waitFor(() => expect(updateClipOverlay).toHaveBeenCalledTimes(1));
   });
 
-  it('removes the title rather than saving the edit on its way out', async () => {
+  // Null is the lock rather than a delete: the clip stops speaking for itself
+  // and is left with the project's configuration, which carries no words.
+  it('takes the title off the clip rather than saving the edit on its way out', async () => {
     render(<Harness />);
     type('Cold open');
     fireEvent.click(screen.getByRole('button', { name: 'Remove this title' }));
 
     await waitFor(() => expect(updateClipOverlay).toHaveBeenCalledTimes(1));
     expect(vi.mocked(updateClipOverlay).mock.calls[0][2]).toBeNull();
+  });
+
+  describe('while it is following the project', () => {
+    const Locked: React.FC = () => {
+      const [draft, setDraft] = useState<OverlayText | null>(null);
+      return (
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <OverlayTextEditor
+            projectId="test-project"
+            clipIndex={0}
+            isOpen
+            isLocked
+            onClose={() => {}}
+            value={draft ?? { ...DEFAULT_OVERLAY_TEXT, text: 'Series name' }}
+            onChange={setDraft}
+          />
+        </QueryClientProvider>
+      );
+    };
+
+    it('shows the inherited title without letting it be edited', () => {
+      render(<Locked />);
+
+      expect(screen.getByLabelText('Text')).toHaveValue('Series name');
+      expect(screen.getByLabelText('Text')).toBeDisabled();
+      expect(screen.queryByRole('button', { name: 'Save and close' })).not.toBeInTheDocument();
+    });
+
+    // Unlocking is a promise about nothing changing until the user changes it,
+    // so the clip is handed exactly what it was already drawing.
+    it('copies what it inherits onto the clip when it is unlocked', async () => {
+      render(<Locked />);
+      fireEvent.click(screen.getByRole('button', { name: 'Give this clip its own title' }));
+
+      await waitFor(() => expect(updateClipOverlay).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(updateClipOverlay).mock.calls[0][2]).toMatchObject({ text: 'Series name' });
+      expect(screen.getByLabelText('Text')).not.toBeDisabled();
+    });
+  });
+
+  // The title written here is the first thing the thumbnail reaches for, so the
+  // still is stale the moment it saves. Without this the card kept the old one
+  // behind its staleTime until the page was reloaded by hand.
+  it('marks this clip\u2019s still stale once the title is saved', async () => {
+    render(<Harness />);
+    client.setQueryData(['clipThumbnail', 'test-project', 0], { settings: {}, title: null });
+    type('Cold open');
+    fireEvent.click(screen.getByRole('button', { name: 'Save and close' }));
+
+    await waitFor(() =>
+      expect(client.getQueryState(['clipThumbnail', 'test-project', 0])?.isInvalidated).toBe(true)
+    );
   });
 
   it('debounces typing into one request rather than one per keystroke', async () => {
@@ -125,5 +182,74 @@ describe('OverlayTextEditor', () => {
     expect(document.querySelector('video')?.getAttribute('src')).toBe('http://localhost:8000/clip.mp4');
     // Drawn on the picture, and in the textarea: two of them, not one.
     expect(screen.getAllByText('Cold open').length).toBeGreaterThan(0);
+  });
+
+  // A preset is a whole contrast decision, not a colour: half of one applied
+  // over half of the last is how a title ends up unreadable.
+  it('applies a preset as one group rather than a colour at a time', async () => {
+    render(<Harness />);
+    type('Cold open');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Yellow on black' }));
+
+    await waitFor(() => expect(updateClipOverlay).toHaveBeenCalled());
+    const sent = vi.mocked(updateClipOverlay).mock.calls.at(-1)?.[2];
+    expect(sent).toMatchObject({
+      text_color: '#FFE000',
+      box_color: '#000000E6',
+      highlight_color: '#FFFFFF',
+    });
+  });
+
+  // The one test the whole craft comes down to: if the words do not land at
+  // the width a phone feed gives them, nobody scrolling reads them.
+  it('shrinks the preview to what a phone feed shows, and back', () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <OverlayTextEditor
+          projectId="test-project"
+          clipIndex={0}
+          isOpen
+          onClose={() => {}}
+          value={{ ...DEFAULT_OVERLAY_TEXT, text: 'Cold open' }}
+          onChange={() => {}}
+          preview={{
+            src: 'http://localhost:8000/clip.mp4',
+            start: 0,
+            end: null,
+            isPreview: false,
+            aspectRatio: 9 / 16,
+            label: 'Clip 1',
+          }}
+        />
+      </QueryClientProvider>
+    );
+
+    const frame = () => document.querySelector('video')?.closest('div')?.parentElement?.parentElement;
+    fireEvent.click(screen.getByRole('button', { name: /feed size/i }));
+    expect(screen.getByRole('button', { name: /back to full size/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(frame()?.style.maxWidth).toBe('120px');
+
+    fireEvent.click(screen.getByRole('button', { name: /back to full size/i }));
+    expect(frame()?.style.maxWidth).not.toBe('120px');
+  });
+
+  it('says when a title has grown past what a thumbnail can carry', () => {
+    render(<Harness />);
+
+    type('one two three');
+    expect(screen.getByText(/^3 words, longest line 13 characters$/)).toBeDefined();
+
+    type('one two three four five six');
+    expect(screen.getByText(/Three to five words is what gets clicked/)).toBeDefined();
+  });
+
+  it('does not count the marks as something anyone reads', () => {
+    render(<Harness />);
+
+    type('we *lost* it');
+
+    // Three words and ten characters: the asterisks are instructions.
+    expect(screen.getByText(/^3 words, longest line 10 characters$/)).toBeDefined();
   });
 });

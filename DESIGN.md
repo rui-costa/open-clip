@@ -41,7 +41,7 @@ Every colour that carries text is chosen to clear 4.5:1 against the surface it s
 
 **What each colour means.** The palette is small enough that each colour has to mean one thing, everywhere:
 
-- `--accent` — **happening now, or the exception.** A running pipeline step, a clip being cut, a clip whose captions are unlocked from the project's, a highlight's hook and social copy (the model talking, as against the transcript quote beside it, which is the one thing on that panel that was actually said).
+- `--accent` — **happening now, or the exception.** A running pipeline step, a clip being cut, a clip whose captions or overlay title are unlocked from the project's, a highlight's hook and social copy (the model talking, as against the transcript quote beside it, which is the one thing on that panel that was actually said).
 - `--success` — **finished, and not undoable from here.** Captions or a title already burned into a file's pixels. Always a fill with `--on-success`; see below. Publication is deliberately *not* in this list: the application cannot see a video deleted on YouTube afterwards, so any badge claiming a clip is published goes stale silently. The card says nothing about YouTube.
 - `--error` — **failed, or about to destroy something.** A failed step, a failed save, delete.
 
@@ -83,7 +83,7 @@ Do not hard-code `1rem` / `0.5rem` / `4px` in component styles. Every literal sp
 - **Radius**: zero, everywhere. No `border-radius` on any control, including native `<select>`.
 - **Border weight**: `--border` (4px) is the system's rule. A 2px border is a real second tier — `.status-badge`, `.options-bar__select`, the LLM output table headers — for things that sit *inside* a 4px-bordered region and would otherwise read as a card in a card.
 - **Containers**: flat, edge-to-edge layouts. **No nested cards** — a bordered block inside a bordered block is the one composition this system rules out. Separate flat regions with a single rule (`borderTop: var(--border)`) instead.
-- **Shadows**: no soft or drop shadows, ever. Hard offset shadows (`4px 4px 0px var(--border-color)`) are permitted in two places only: hover states conveying interactivity, and modal elevation above a scrim. No blur, no `backdrop-filter`.
+- **Shadows**: no soft or drop shadows, ever. Hard offset shadows (`4px 4px 0px var(--border-color)`) are permitted in three places only: hover states conveying interactivity, modal elevation above a scrim, and the title burned *over the picture* — the one shadow that also has to exist in the rendered file, where the offset does the job a border does elsewhere: separating text from a ground the palette does not control. No blur, no `backdrop-filter`, in any of the three.
 
 ### Layout
 

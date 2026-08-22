@@ -203,6 +203,27 @@ describe('ClipDetail Component', () => {
   // measures as zero unless one is stood in.
   beforeAll(() => stubFrameSize(400));
 
+  /**
+   * The caption preview, carrying the title this clip resolves to.
+   *
+   * The page reads the title from here rather than off the highlight, because
+   * a clip that has never taken one of its own draws the project's and only
+   * the backend knows which of the two that is. `null` is a backend older than
+   * the project-level setting.
+   */
+  const captionsWith = (overlay: OverlayText | null, locked = true) => ({
+    enabled: true,
+    style: captionStyle,
+    font: captionFont,
+    locked: true,
+    settings: null,
+    overlay,
+    overlay_font: overlay ? captionFont : null,
+    overlay_locked: locked,
+    duration: 10,
+    cues: [],
+  });
+
   beforeEach(() => {
     vi.mocked(getProjectMetadata).mockReset();
     vi.mocked(getClipCaptions).mockReset();
@@ -211,18 +232,21 @@ describe('ClipDetail Component', () => {
     // ordering rather than on behaviour.
     vi.mocked(uploadClip).mockReset();
     vi.mocked(uploadClipThumbnail).mockReset();
-    vi.mocked(getClipCaptions).mockResolvedValue({
-      enabled: true,
-      style: captionStyle,
-      font: captionFont,
-      locked: true,
-      settings: null,
-      // A clip with no title of its own, which is every clip until one is added.
-      overlay: null,
-      overlay_font: null,
-      duration: 10,
-      cues: [],
-    });
+    vi.mocked(getClipCaptions).mockResolvedValue(captionsWith(null));
+  });
+
+  // The still is what anyone decides to click, so the words on it belong with
+  // the rest of the writing rather than only inside the thumbnail dialog. The
+  // asterisks stay in: the marked word is the point of the line.
+  it('shows the model\'s thumbnail line with its mark', async () => {
+    vi.mocked(getProjectMetadata).mockResolvedValue(
+      project([highlight({ thumbnail_text: 'we *lost* it' })])
+    );
+
+    renderDetail('0');
+
+    expect(await screen.findByText('Thumbnail text')).toBeDefined();
+    expect(screen.getByText('we *lost* it')).toBeDefined();
   });
 
   it('shows a loading state while the project is being fetched', () => {
@@ -393,15 +417,7 @@ describe('ClipDetail Component', () => {
       project([highlight({ viral_hook_text: 'NOT RENDERED' })])
     );
     vi.mocked(getClipCaptions).mockResolvedValue({
-      enabled: true,
-      style: captionStyle,
-      font: captionFont,
-      locked: true,
-      settings: null,
-      // A clip with no title of its own, which is every clip until one is added.
-      overlay: null,
-      overlay_font: null,
-      duration: 10,
+      ...captionsWith(null),
       cues: [{ start: 0, end: 1, text: 'first words', words: [
         { text: 'first', start: 0, end: 0.5 },
         { text: 'words', start: 0.5, end: 1 },
@@ -426,15 +442,7 @@ describe('ClipDetail Component', () => {
       ])
     );
     vi.mocked(getClipCaptions).mockResolvedValue({
-      enabled: true,
-      style: captionStyle,
-      font: captionFont,
-      locked: true,
-      settings: null,
-      // A clip with no title of its own, which is every clip until one is added.
-      overlay: null,
-      overlay_font: null,
-      duration: 10,
+      ...captionsWith(null),
       cues: [{ start: 0, end: 1, text: 'burned in', words: [{ text: 'burned', start: 0, end: 1 }] }],
     });
 
@@ -458,15 +466,7 @@ describe('ClipDetail Component', () => {
       ])
     );
     vi.mocked(getClipCaptions).mockResolvedValue({
-      enabled: true,
-      style: captionStyle,
-      font: captionFont,
-      locked: true,
-      settings: null,
-      // A clip with no title of its own, which is every clip until one is added.
-      overlay: null,
-      overlay_font: null,
-      duration: 10,
+      ...captionsWith(null),
       cues: [{ start: 0, end: 1, text: 'not yet', words: [{ text: 'pending', start: 0, end: 1 }] }],
     });
 
@@ -521,12 +521,13 @@ describe('ClipDetail Component', () => {
 
   // The social copy is written by a later pipeline step. Four boxes holding
   // nothing but their own labels read as the feature being broken.
-  it('says which step fills the social posts instead of rendering them blank', async () => {
+  it('says which step fills the written fields instead of rendering them blank', async () => {
     vi.mocked(getProjectMetadata).mockResolvedValue(
       project([
         highlight({
           viral_hook_text: 'HOOK',
           video_title_for_youtube_short: undefined,
+          thumbnail_text: undefined,
           video_description_for_x: undefined,
           video_description_for_reddit: undefined,
           video_description_for_linkedin: undefined,
@@ -536,7 +537,9 @@ describe('ClipDetail Component', () => {
 
     renderDetail('0');
 
-    expect((await screen.findAllByText(/Run the Video Meta step/i)).length).toBe(4);
+    // Matched on "Not written yet" rather than on the step: the YouTube
+    // description below names the same step and is not one of these.
+    expect((await screen.findAllByText(/Not written yet/i)).length).toBe(5);
   });
 
   it('falls back to naming the transcribe step when a highlight has no text', async () => {
@@ -792,6 +795,9 @@ describe('ClipDetail Component', () => {
           }),
         ])
       );
+      vi.mocked(getClipCaptions).mockResolvedValue(
+        captionsWith({ ...overlayText, text: 'Cold open' }, false)
+      );
 
       renderDetail('0');
 
@@ -809,6 +815,9 @@ describe('ClipDetail Component', () => {
             overlay_burned: true,
           }),
         ])
+      );
+      vi.mocked(getClipCaptions).mockResolvedValue(
+        captionsWith({ ...overlayText, text: 'Cold open' }, false)
       );
 
       renderDetail('0');
@@ -829,6 +838,9 @@ describe('ClipDetail Component', () => {
             overlay_burned: false,
           }),
         ])
+      );
+      vi.mocked(getClipCaptions).mockResolvedValue(
+        captionsWith({ ...overlayText, text: 'Cold open' }, false)
       );
 
       renderDetail('0');

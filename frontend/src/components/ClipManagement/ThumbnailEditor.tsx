@@ -101,6 +101,10 @@ export const ThumbnailEditor: React.FC<ThumbnailEditorProps> = ({
   const unsavedRef = useRef<ThumbnailSettings | null>(null);
   // What the player is showing, which is what "use this frame" means.
   const [livePosition, setLivePosition] = useState(0);
+  // How wide a thumbnail is in a phone's feed, and the only test that decides
+  // whether the words on it work. Not persisted: it is a way of looking at the
+  // still, not part of it.
+  const [feedSize, setFeedSize] = useState(false);
   const [draft, setDraft] = useState<ThumbnailSettings | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -224,9 +228,14 @@ export const ThumbnailEditor: React.FC<ThumbnailEditorProps> = ({
             style={{
               border: 'var(--border)',
               marginInline: 'auto',
-              maxWidth: preview.aspectRatio
-                ? `calc(min(300px, 40vh) * ${preview.aspectRatio})`
-                : undefined,
+              // Everything drawn on the still is a percentage of the frame, so
+              // shrinking the frame shrinks the thumbnail whole rather than
+              // showing the same text at a smaller preview size.
+              maxWidth: feedSize
+                ? '120px'
+                : preview.aspectRatio
+                  ? `calc(min(300px, 40vh) * ${preview.aspectRatio})`
+                  : undefined,
             }}
           >
             <ClipPlayer
@@ -264,6 +273,16 @@ export const ThumbnailEditor: React.FC<ThumbnailEditorProps> = ({
                 </>
               )}
             />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 'var(--space-sm)' }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setFeedSize(!feedSize)}
+              aria-pressed={feedSize}
+            >
+              {feedSize ? 'Back to full size' : 'Feed size (120px)'}
+            </Button>
           </div>
         </div>
       )}

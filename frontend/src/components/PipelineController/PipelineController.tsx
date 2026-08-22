@@ -1,4 +1,5 @@
 import React from 'react';
+import type { StepActivity } from '../../api';
 
 export type StepStatus = 'todo' | 'running' | 'executed' | 'completed' | 'error' | 'locked';
 
@@ -438,6 +439,82 @@ const PipelineControllerRow: React.FC<PipelineControllerProps> = ({ onExecute, s
         {sweep}
         {stepButtons}
       </div>
+    </div>
+  );
+};
+
+/** "6m 12s", "48s". Seconds are kept all the way up: a step that has been
+ *  going for eight minutes and one that has been going for eight minutes and
+ *  fifty seconds are different amounts of patience to ask for. */
+const elapsed = (seconds: number): string => {
+  const whole = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(whole / 60);
+  return minutes > 0 ? `${minutes}m ${whole % 60}s` : `${whole}s`;
+};
+
+interface PipelineActivityProps {
+  steps: PipelineStep[];
+  /** Keyed by step name, from `/execution_status`. */
+  activity?: Record<string, StepActivity>;
+  /** The backend's clock at the moment `activity` was read, in epoch seconds. */
+  now?: number;
+}
+
+/**
+ * What the running step is doing, in a sentence, under the row.
+ *
+ * The row itself can only say "running", and for the LLM steps that word
+ * covers a single HTTP request that can take minutes — during which an
+ * overloaded model being retried for the fourth time and a request that will
+ * never return look exactly alike, which is to say they both look like the
+ * application has hung. This is the only place that difference is visible.
+ *
+ * Deliberately outside the memoised row: this re-renders on every poll,
+ * because the elapsed time is a second older each time, and the row is a dozen
+ * buttons that change three or four times in a whole pipeline.
+ */
+export const PipelineActivity: React.FC<PipelineActivityProps> = ({ steps, activity, now }) => {
+  if (!activity) return null;
+  const clock = now ?? Date.now() / 1000;
+
+  const running = steps
+    .filter((step) => step.status === 'running' && activity[step.name])
+    .map((step) => ({ step, entry: activity[step.name] }));
+
+  if (running.length === 0) return null;
+
+  return (
+    <div
+      // Polite, not assertive: this changes while the user is doing something
+      // else on the page, and it is never urgent enough to interrupt.
+      role="status"
+      aria-live="polite"
+      style={{
+        marginTop: 'var(--space-sm)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 'var(--space-sm)',
+      }}
+    >
+      {running.map(({ step, entry }) => (
+        <p
+          key={step.name}
+          style={{
+            margin: 0,
+            fontSize: '0.7rem',
+            fontWeight: 700,
+            lineHeight: 1.4,
+            color: 'var(--text-muted)',
+          }}
+        >
+          <span style={{ color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            {step.label} · {elapsed(clock - entry.since)}
+          </span>
+          {/* Until something inside the step reports, the elapsed time is the
+              whole message — and it is already more than "running" said. */}
+          {entry.message ? ` — ${entry.message}` : ''}
+        </p>
+      ))}
     </div>
   );
 };

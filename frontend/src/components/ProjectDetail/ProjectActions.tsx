@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { PipelineController } from '../PipelineController/PipelineController';
+import { PipelineActivity, PipelineController } from '../PipelineController/PipelineController';
 import type { StepStatus } from '../PipelineController/PipelineController';
 import { ProjectSettingsMenu } from './ProjectSettingsMenu';
 import { HighlightPanel } from './HighlightPanel';
@@ -9,6 +9,7 @@ import {
   getExecutionStatus,
   getMarkerEdlUrl,
   type ProjectMetadata,
+  type StepActivity,
 } from '../../api';
 import { stepLabel } from '../../utils/stepLabels';
 
@@ -92,6 +93,11 @@ export const ProjectActions: React.FC<ProjectActionsProps> = ({
     [pipelineConfig, statusKey]
   );
 
+  const activity = allStatuses?.activity as unknown as
+    | Record<string, StepActivity>
+    | undefined;
+  const serverNow = allStatuses?.now as unknown as number | undefined;
+
   const anyRunning = steps.some((step) => step.status === 'running');
   const anyFailed = steps.some((step) => step.status === 'error');
   const allDone =
@@ -170,6 +176,7 @@ export const ProjectActions: React.FC<ProjectActionsProps> = ({
         {isPipelineOpen && (
           <div id={pipelineMenuId} className="project-actions__menu menu-enter">
             <PipelineController onExecute={onExecuteAction} steps={steps} prominence="compact" />
+            <PipelineActivity steps={steps} activity={activity} now={serverNow} />
           </div>
         )}
       </div>

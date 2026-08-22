@@ -20,6 +20,7 @@ import { CaptionOverlay } from './CaptionOverlay';
 import { CaptionStyler } from './CaptionStyler';
 import { TextOverlay } from './TextOverlay';
 import { OverlayTextEditor } from './OverlayTextEditor';
+import { OverlayStyler } from './OverlayStyler';
 import { ThumbnailEditor } from './ThumbnailEditor';
 import { ThumbnailPreview } from './ThumbnailPreview';
 import type { CaptionPreviewSource } from './ClipCaptionSettings';
@@ -229,14 +230,17 @@ export const ClipDetail: React.FC = () => {
   // Drawn over the video unless the file already carries them, in which case
   // overlaying would double every word.
   const showOverlay = !!captions?.cues.length && !highlight.captions_burned;
-  // The title as it stands: what is being typed, or what is stored, or the
-  // values a new one starts from.
-  const overlay = overlayDraft ?? highlight.overlay ?? DEFAULT_OVERLAY_TEXT;
+  // The title as it stands: what is being typed, or what the clip resolves to
+  // — its own if it has one, otherwise the project's — or the values a new one
+  // starts from. Read from the caption preview rather than from the highlight,
+  // because only the backend knows which of the two a locked clip inherits.
+  const overlay = overlayDraft ?? captions?.overlay ?? DEFAULT_OVERLAY_TEXT;
+  const hasTitle = !!overlay.text.trim();
   // Same rule as the captions: a title already in the file's pixels is not
   // drawn again on top of itself. While the editor is open it is drawn anyway,
   // because that is the only way to see what is being changed.
   const showTitle =
-    !!overlay.text.trim() && overlay.enabled && (isEditingOverlay || !highlight.overlay_burned);
+    hasTitle && overlay.enabled && (isEditingOverlay || !highlight.overlay_burned);
   const sourceUrl = projectMetadata.files?.original_file
     ? getSourceVideoUrl(projectMetadata.project_id, projectMetadata.files.original_file)
     : null;
@@ -277,6 +281,10 @@ export const ClipDetail: React.FC = () => {
 
   const socialPosts = [
     { label: 'YouTube title', content: highlight.video_title_for_youtube_short },
+    // Not a post, but written by the same step and read for the same reason:
+    // it is what the still says, and the still is what anyone decides to click.
+    // Shown with its asterisks in, because the marked word is the point.
+    { label: 'Thumbnail text', content: highlight.thumbnail_text },
     { label: 'X post', content: highlight.video_description_for_x },
     { label: 'Reddit', content: highlight.video_description_for_reddit },
     { label: 'LinkedIn', content: highlight.video_description_for_linkedin },
@@ -440,7 +448,7 @@ export const ClipDetail: React.FC = () => {
                         project that has only found its highlights has none of
                         it. Four boxes containing nothing but their own labels
                         read as the feature being broken. */}
-                    {item.content || <Missing>Not written yet. Run the Video Meta step.</Missing>}
+                    {item.content || <Missing>Not written yet. Run the Highlights step.</Missing>}
                   </p>
                 </div>
               ))}
@@ -470,7 +478,7 @@ export const ClipDetail: React.FC = () => {
             youtubeVideoId={highlight.youtube_video_id}
             uploadedAt={highlight.uploaded_at}
             renderedAt={highlight.rendered_at}
-            hasOverlay={!!highlight.overlay?.text?.trim()}
+            hasOverlay={hasTitle}
             onEditOverlay={() => setIsEditingOverlay(true)}
             onEditThumbnail={() => setIsEditingThumbnail(true)}
           />
@@ -489,6 +497,7 @@ export const ClipDetail: React.FC = () => {
             value={overlay}
             onChange={setOverlayDraft}
             isBurned={!!highlight.overlay_burned}
+            isLocked={captions?.overlay_locked ?? false}
           />
           <ThumbnailEditor
             projectId={projectId!}
@@ -500,7 +509,7 @@ export const ClipDetail: React.FC = () => {
             preview={thumbnailPreview}
             captions={captions}
           />
-          {isRendered && !!highlight.overlay?.text?.trim() && !highlight.overlay_burned && (
+          {isRendered && hasTitle && overlay.enabled && !highlight.overlay_burned && (
             <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
               This title is not in the rendered file yet. Regenerate the clip to burn it in.
             </p>
@@ -515,6 +524,12 @@ export const ClipDetail: React.FC = () => {
               settings={projectMetadata.settings?.captions}
               style={captions?.style}
             />
+            <div style={{ marginTop: 'var(--space-md)' }}>
+              <OverlayStyler
+                projectId={projectId!}
+                overlay={projectMetadata.settings?.overlay}
+              />
+            </div>
             {isRendered && (
               <p style={{ margin: 'var(--space-sm) 0 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 This clip is already rendered. Re-run the clipper to apply caption changes to the file.

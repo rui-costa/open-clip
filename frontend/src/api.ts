@@ -77,6 +77,11 @@ export type OverlayText = {
   text_color: string;
   outline_color: string;
   outline_pct: number;
+  /** A hard offset shadow, down and right, no blur. Zero draws none. */
+  shadow_color: string;
+  shadow_pct: number;
+  /** What a `*marked*` word is drawn in. Unused by a title with no marks. */
+  highlight_color: string;
   box_color: string | null;
   /** Distance from the top of the frame, unlike a caption's, measured up from the bottom. */
   position_pct: number;
@@ -100,13 +105,26 @@ export const DEFAULT_OVERLAY_TEXT: OverlayText = {
   fade_in: 0,
   fade_out: 0.6,
   font_family: 'Arial Black',
+  // As large as the frame allows rather than as large as possible: a word
+  // wider than the frame is cut off by the burn, not wrapped.
   font_size_pct: 8,
   bold: true,
   italic: false,
   uppercase: true,
   text_color: '#FFFFFF',
   outline_color: '#000000',
-  outline_pct: 0.6,
+  // Heavy, because the background is always moving footage rather than a flat
+  // colour — the case the thumbnail guidance says to go heavier for.
+  outline_pct: 0.9,
+  // A title arrives with a shadow rather than being offered one: it is the
+  // difference between text sitting over the picture and text printed onto it,
+  // and it is the only lift that survives on a thumbnail's single frame.
+  shadow_color: '#000000',
+  shadow_pct: 0.8,
+  // Only drawn where a word is marked. Yellow because that is the pairing that
+  // measures best against a dark ground, and the ground here is an outline and
+  // a shadow that are both black by default.
+  highlight_color: '#FFE000',
   box_color: null,
   position_pct: 12,
   max_width_pct: 86,
@@ -179,10 +197,15 @@ export type CaptionPreview = {
   font: CaptionFont;
   duration: number;
   cues: CaptionCue[];
-  /** This clip's title, or null while it has never been given one. */
+  /**
+   * The title this clip draws: its own when it has unlocked one, otherwise the
+   * project's. Null only for a backend older than the project-level setting.
+   */
   overlay: OverlayText | null;
   /** The face the title will be burned with. Null when there is no title. */
   overlay_font: CaptionFont | null;
+  /** True when the title above is the project's rather than this clip's own. */
+  overlay_locked: boolean;
   /** True when this clip follows the project rather than its own settings. */
   locked: boolean;
   /** The clip's own settings, or null while it is locked to the project. */
@@ -204,6 +227,12 @@ export type Highlight = {
   end: number;
   highlight_text?: string;
   viral_hook_text?: string;
+  /**
+   * The model's words for the thumbnail: a handful, one of them wrapped in
+   * asterisks for the renderer to colour. Read at feed size with no sound and
+   * no context, which is why it is not the hook.
+   */
+  thumbnail_text?: string;
   video_title_for_youtube_short?: string;
   /** The model's description of this clip, before the template wraps it. */
   video_description_for_youtube_short?: string;
@@ -275,6 +304,12 @@ export type ProjectMetadata = {
     resolution?: string;
     aspect_ratio?: string;
     captions?: CaptionSettings;
+    /**
+     * The standing title every clip draws unless it has unlocked its own. Like
+     * the captions, this is the project's copy: a clip inherits it until it
+     * saves one of its own.
+     */
+    overlay?: OverlayText;
     description?: DescriptionSettings;
     /**
      * What a clip shows while it is sitting still: its thumbnail, or the video
@@ -490,6 +525,22 @@ export const getAspectRatios = async (): Promise<string[]> => {
   return Object.keys(await getAspectRatioMap());
 };
 
+/**
+ * What one running step is doing, from `/execution_status`.
+ *
+ * `since` is always there — it is when the step was triggered, and a step that
+ * has said nothing yet can still say how long it has been going. `message` only
+ * appears once something inside the step has reported: which model is being
+ * waited on, why it is being retried, which one it fell back to.
+ */
+export type StepActivity = {
+  /** Epoch seconds, from the backend's clock. */
+  since: number;
+  message?: string;
+  /** Epoch seconds when `message` was recorded. */
+  at?: number;
+};
+
 export const getExecutionStatus = async (projectId: string): Promise<Record<string, string>> => {
   return apiRequest(`/project/${projectId}/execution_status`);
 };
@@ -695,6 +746,7 @@ export const updateProjectSettings = async (
     resolution?: string;
     aspect_ratio?: string;
     captions?: Partial<CaptionSettings>;
+    overlay?: Partial<OverlayText>;
     description?: Partial<DescriptionSettings>;
     clip_preview?: ClipPreview;
   }
@@ -723,17 +775,20 @@ export const updateClipCaptions = async (
 };
 
 /**
- * One clip's title, or `null` to take it off the clip entirely.
+ * One clip's own title, or `null` to put it back under the project's.
  *
  * The whole object is sent rather than a patch, for the same reason the caption
  * settings are: the editor holds the whole form. What comes back is the stored
  * value after the backend has clamped it, which is what will actually be burned.
+ *
+ * `null` is the lock, not a delete: a clip that wants no title at all against a
+ * project that has one keeps its own and switches it off.
  */
 export const updateClipOverlay = async (
   projectId: string,
   clipIndex: number,
   overlay: OverlayText | null
-): Promise<{ status: string; overlay: OverlayText | null }> => {
+): Promise<{ status: string; overlay: OverlayText | null; locked: boolean }> => {
   return apiRequest(`/project/${projectId}/clip/${clipIndex}/overlay`, {
     method: 'PUT',
     body: JSON.stringify({ overlay }),

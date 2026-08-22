@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { PipelineController } from './PipelineController';
+import { PipelineActivity, PipelineController } from './PipelineController';
 import type { PipelineStep } from './PipelineController';
 
 const steps: PipelineStep[] = [
@@ -134,5 +134,67 @@ describe('PipelineController', () => {
 
     // `chapters` errored, so the aggregate must not read as completed.
     expect(screen.getByRole('button', { name: /AI Steps/i }).style.background).toBe('var(--error)');
+  });
+});
+
+// "Running" is the same word for a step three seconds in and a step six
+// minutes into a request that will never return. The line under the row is
+// where that difference lives.
+describe('PipelineActivity', () => {
+  const running: PipelineStep[] = [
+    { name: 'transcription', label: 'Transcription', status: 'completed' },
+    { name: 'highlights', label: 'Highlights', status: 'running', isLlm: true },
+  ];
+
+  it('says how long the step has been going, before it has said anything else', () => {
+    render(
+      <PipelineActivity steps={running} activity={{ highlights: { since: 1000 } }} now={1372} />
+    );
+
+    expect(screen.getByText(/Highlights · 6m 12s/)).toBeDefined();
+  });
+
+  it('says what the step is waiting on once it reports', () => {
+    render(
+      <PipelineActivity
+        steps={running}
+        activity={{
+          highlights: {
+            since: 1000,
+            at: 1360,
+            message: 'gemini-3.7-flash: Google says the model is overloaded. Trying again in 21s — attempt 3 of 4.',
+          },
+        }}
+        now={1048}
+      />
+    );
+
+    expect(screen.getByText(/attempt 3 of 4/)).toBeDefined();
+    expect(screen.getByText(/Highlights · 48s/)).toBeDefined();
+  });
+
+  // It changes under a user who is doing something else on the page, and it is
+  // never urgent enough to interrupt them.
+  it('is announced politely rather than assertively', () => {
+    const { container } = render(
+      <PipelineActivity steps={running} activity={{ highlights: { since: 0 } }} now={5} />
+    );
+
+    expect(container.querySelector('[role="status"]')?.getAttribute('aria-live')).toBe('polite');
+  });
+
+  it('draws nothing for a step that is not running', () => {
+    const done: PipelineStep[] = [{ name: 'highlights', label: 'Highlights', status: 'completed' }];
+    const { container } = render(
+      <PipelineActivity steps={done} activity={{ highlights: { since: 0 } }} now={99} />
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('draws nothing when the backend sent no activity at all', () => {
+    const { container } = render(<PipelineActivity steps={running} />);
+
+    expect(container.firstChild).toBeNull();
   });
 });

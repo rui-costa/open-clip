@@ -1,12 +1,12 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
 import { ClipPlayer } from './ClipPlayer';
 import { TextOverlay } from './TextOverlay';
+import { OverlayControls } from './OverlayControls';
 import type { CaptionPreviewSource } from './ClipCaptionSettings';
 import {
-  DEFAULT_OVERLAY_TEXT,
   updateClipOverlay,
   type CaptionFont,
   type OverlayText,
@@ -34,38 +34,24 @@ interface OverlayTextEditorProps {
   onChange: (next: OverlayText) => void;
   /** True once the rendered file already has this title in its pixels. */
   isBurned?: boolean;
+  /**
+   * True while this clip has no title of its own.
+   *
+   * The same lock the caption settings keep: the clip stores nothing, so the
+   * project's configuration keeps reaching it, and the controls show the look
+   * it would be drawn in until the user writes a line of their own.
+   */
+  isLocked?: boolean;
 }
 
-const SLIDERS: Array<{ key: keyof OverlayText; label: string; min: number; max: number; step: number; unit: string }> = [
-  { key: 'start', label: 'Starts at', min: 0, max: 30, step: 0.5, unit: 's into the clip' },
-  { key: 'duration', label: 'Stays for', min: 0.5, max: 30, step: 0.5, unit: 's' },
-  // Listed, and zero by default: a title that ramps up is invisible on the one
-  // frame most likely to be seen, so the fade has to be a decision.
-  { key: 'fade_in', label: 'Fades in over', min: 0, max: 5, step: 0.1, unit: 's' },
-  { key: 'fade_out', label: 'Fades out over', min: 0, max: 5, step: 0.1, unit: 's' },
-  { key: 'font_size_pct', label: 'Size', min: 2, max: 20, step: 0.5, unit: '% of frame' },
-  { key: 'position_pct', label: 'Position', min: 0, max: 85, step: 1, unit: '% from top' },
-  { key: 'max_width_pct', label: 'Width', min: 40, max: 100, step: 2, unit: '% of frame' },
-  { key: 'outline_pct', label: 'Outline', min: 0, max: 2, step: 0.1, unit: '% of frame' },
-];
-
-const labelStyle: React.CSSProperties = {
-  fontWeight: 900,
-  textTransform: 'uppercase',
-  fontSize: '0.7rem',
-  letterSpacing: '0.05em',
-};
-
-const controlStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '0.4rem',
-  border: '2px solid var(--border-color)',
-  background: 'var(--bg)',
-  color: 'var(--text)',
-  fontWeight: 700,
-  fontSize: '0.8rem',
-  minHeight: '44px',
-};
+/**
+ * How wide a thumbnail actually is in a phone's feed.
+ *
+ * The one test the whole craft comes down to: shrink it to this and see if the
+ * words still land. A title that needs the 300px preview to be read is a title
+ * nobody reads.
+ */
+const FEED_WIDTH_PX = 120;
 
 /**
  * One clip's overlay title: the text, when it shows, and how it looks.
@@ -74,6 +60,11 @@ const controlStyle: React.CSSProperties = {
  * the caption settings keep: the clipper burns from what is stored, so what the
  * preview draws is a promise about the next render. Writes are debounced
  * because typing a title would otherwise be one request per keystroke.
+ *
+ * A clip that has never been given a title of its own has none: the controls
+ * show the project's configuration, which is the look any title here would be
+ * drawn in, until it is unlocked. Unlocking copies that look onto the clip, so
+ * writing a title never means restyling one.
  *
  * Saving does not touch the rendered file — nothing does until the clip is
  * re-cut — so the dialog says so rather than letting a saved title look burned.
@@ -86,6 +77,7 @@ export const OverlayTextEditor: React.FC<OverlayTextEditorProps> = ({
   value,
   onChange,
   isBurned = false,
+  isLocked = false,
   preview = null,
   font = null,
 }) => {
@@ -96,6 +88,15 @@ export const OverlayTextEditor: React.FC<OverlayTextEditorProps> = ({
   // re-render this component first.
   const unsavedRef = useRef<OverlayText | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  // Not persisted: it is a way of looking at the title, not part of it.
+  const [feedSize, setFeedSize] = useState(false);
+  // Reported by the preview, which is the only thing here that knows how wide
+  // the real face draws these particular words.
+  const [clipped, setClipped] = useState(false);
+  // Set the moment the clip is unlocked, so the controls come alive on the same
+  // press rather than a request and a refetch later.
+  const [unlocked, setUnlocked] = useState(false);
+  const locked = isLocked && !unlocked;
 
   const invalidate = () => {
     // The stored overlay travels on the project; the face it will be drawn
@@ -103,6 +104,9 @@ export const OverlayTextEditor: React.FC<OverlayTextEditorProps> = ({
     queryClient.invalidateQueries({ queryKey: ['project', projectId] });
     queryClient.invalidateQueries({ queryKey: ['projectMetadata', projectId] });
     queryClient.invalidateQueries({ queryKey: ['clipCaptions', projectId] });
+    // The still says the same words: a title written here is the first thing
+    // the thumbnail reaches for, so its preview is stale the moment this saves.
+    queryClient.invalidateQueries({ queryKey: ['clipThumbnail', projectId, clipIndex] });
   };
 
   const mutation = useMutation({
@@ -138,19 +142,34 @@ export const OverlayTextEditor: React.FC<OverlayTextEditorProps> = ({
 
   const close = () => {
     flush();
+    // The lock is a property of the clip, so the next time this dialog opens —
+    // on a different clip, or on the same one after the project came back — it
+    // starts from what that clip says rather than from this session's answer.
+    setUnlocked(false);
     onClose();
   };
 
-  const set = <K extends keyof OverlayText>(key: K, next: OverlayText[K]) =>
-    commit({ ...value, [key]: next });
+  /**
+   * Gives this clip a title of its own.
+   *
+   * Seeded from the project's configuration, so the words are the only thing
+   * left to decide: a new title arrives in the look the rest of the project
+   * already uses.
+   */
+  const unlock = () => {
+    setUnlocked(true);
+    commit({ ...value }, true);
+    textRef.current?.focus();
+  };
 
-  const remove = () => {
+  /** Takes the title off this clip; the project's configuration is all that is left. */
+  const relock = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = null;
-    // Dropped rather than flushed: the pending edit is to a title that is about
-    // to stop existing, and sending it would race the removal.
+    // Dropped rather than flushed: the pending edit is to a title the clip is
+    // about to stop owning, and sending it would race the removal.
     unsavedRef.current = null;
-    onChange({ ...DEFAULT_OVERLAY_TEXT, enabled: false, text: '' });
+    setUnlocked(false);
     mutation.mutate(null);
     onClose();
   };
@@ -163,18 +182,24 @@ export const OverlayTextEditor: React.FC<OverlayTextEditorProps> = ({
       maxWidth={preview ? '620px' : undefined}
       initialFocusRef={textRef}
       footer={
-        <>
-          <Button variant="ghost" onClick={remove}>
-            Remove this title
+        locked ? (
+          <Button variant="primary" onClick={unlock}>
+            Give this clip its own title
           </Button>
-          {/* Redundant against the autosave, and worth having anyway: a form
-              with no button to press gives the user nothing to believe. It
-              sends what the debounce is still holding rather than a copy of
-              what is already stored. */}
-          <Button variant="primary" onClick={close}>
-            Save and close
-          </Button>
-        </>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={relock}>
+              Remove this title
+            </Button>
+            {/* Redundant against the autosave, and worth having anyway: a form
+                with no button to press gives the user nothing to believe. It
+                sends what the debounce is still holding rather than a copy of
+                what is already stored. */}
+            <Button variant="primary" onClick={close}>
+              Save and close
+            </Button>
+          </>
+        )
       }
     >
       {preview && (
@@ -194,9 +219,14 @@ export const OverlayTextEditor: React.FC<OverlayTextEditorProps> = ({
             style={{
               border: 'var(--border)',
               marginInline: 'auto',
-              maxWidth: preview.aspectRatio
-                ? `calc(min(300px, 40vh) * ${preview.aspectRatio})`
-                : undefined,
+              // The whole frame shrinks, so the overlay shrinks with it: every
+              // size on a title is a percentage of the frame, and the preview
+              // measures the box it is actually drawn in.
+              maxWidth: feedSize
+                ? `${FEED_WIDTH_PX}px`
+                : preview.aspectRatio
+                  ? `calc(min(300px, 40vh) * ${preview.aspectRatio})`
+                  : undefined,
             }}
           >
             <ClipPlayer
@@ -215,123 +245,41 @@ export const OverlayTextEditor: React.FC<OverlayTextEditorProps> = ({
                   // whatever the playhead is doing — including at the exact
                   // moment its fade starts, where it is otherwise invisible.
                   forceVisible
+                  onOverflow={setClipped}
                 />
               )}
             />
           </div>
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 'var(--space-sm)' }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setFeedSize(!feedSize)}
+              aria-pressed={feedSize}
+            >
+              {feedSize ? 'Back to full size' : `Feed size (${FEED_WIDTH_PX}px)`}
+            </Button>
+          </div>
         </div>
       )}
       <p style={{ margin: '0 0 var(--space-md) 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-        {isBurned
-          ? 'This title is already burned into the rendered file. Changing it here changes the next render, not the file you have.'
-          : preview
-            ? 'Saved as you type, and drawn on the clip above. Regenerate the clip to burn it into the video.'
-            : 'Saved as you type, and drawn over the player behind this dialog. Regenerate the clip to burn it into the video.'}
+        {locked
+          ? 'This clip has no title of its own. Write one and it is drawn in the project\u2019s look, which you set under Overlay titles.'
+          : isBurned
+            ? 'This title is already burned into the rendered file. Changing it here changes the next render, not the file you have.'
+            : preview
+              ? 'Saved as you type, and drawn on the clip above. Regenerate the clip to burn it into the video.'
+              : 'Saved as you type, and drawn over the player behind this dialog. Regenerate the clip to burn it into the video.'}
       </p>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-        <div>
-          <label htmlFor={`clip-${clipIndex}-overlay-text`} style={labelStyle}>Text</label>
-          <textarea
-            id={`clip-${clipIndex}-overlay-text`}
-            ref={textRef}
-            value={value.text}
-            rows={2}
-            maxLength={200}
-            placeholder="The line that opens the clip"
-            onChange={(event) => set('text', event.target.value)}
-            style={{ ...controlStyle, resize: 'vertical', fontFamily: 'inherit' }}
-          />
-          <p style={{ margin: 'var(--space-sm) 0 0 0', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-            A line break here is a line break on the video.
-          </p>
-        </div>
-
-        <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', minHeight: '44px', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={value.enabled}
-            onChange={(event) => set('enabled', event.target.checked)}
-            style={{ width: '20px', height: '20px', accentColor: 'var(--accent)' }}
-          />
-          Burn this title into rendered clips
-        </label>
-
-        {SLIDERS.map((slider) => {
-          const raw = value[slider.key];
-          const numeric = typeof raw === 'number' && Number.isFinite(raw)
-            ? Math.min(slider.max, Math.max(slider.min, raw))
-            : slider.min;
-          return (
-            <div key={slider.key}>
-              <label htmlFor={`clip-${clipIndex}-overlay-${slider.key}`} style={labelStyle}>
-                {slider.label}
-                {/* Logical, not `right`: this label is a row of two things and
-                    should flip with the writing direction. */}
-                <span style={{ float: 'inline-end', color: 'var(--text-muted)' }}>
-                  {numeric}{slider.unit ? ` ${slider.unit}` : ''}
-                </span>
-              </label>
-              <input
-                id={`clip-${clipIndex}-overlay-${slider.key}`}
-                type="range"
-                min={slider.min}
-                max={slider.max}
-                step={slider.step}
-                value={numeric}
-                onChange={(event) => set(slider.key, Number(event.target.value) as never)}
-                style={{ width: '100%', accentColor: 'var(--accent)', cursor: 'pointer', minHeight: '44px' }}
-              />
-            </div>
-          );
-        })}
-
-        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
-          <div style={{ flex: '1 1 40%' }}>
-            <label htmlFor={`clip-${clipIndex}-overlay-text_color`} style={labelStyle}>Text colour</label>
-            <input
-              id={`clip-${clipIndex}-overlay-text_color`}
-              type="color"
-              value={value.text_color}
-              onChange={(event) => set('text_color', event.target.value.toUpperCase())}
-              style={{ ...controlStyle, padding: '2px', cursor: 'pointer' }}
-            />
-          </div>
-          <div style={{ flex: '1 1 40%' }}>
-            <label htmlFor={`clip-${clipIndex}-overlay-outline_color`} style={labelStyle}>Outline colour</label>
-            <input
-              id={`clip-${clipIndex}-overlay-outline_color`}
-              type="color"
-              value={value.outline_color}
-              onChange={(event) => set('outline_color', event.target.value.toUpperCase())}
-              style={{ ...controlStyle, padding: '2px', cursor: 'pointer' }}
-            />
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
-          <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', minHeight: '44px', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={value.uppercase}
-              onChange={(event) => set('uppercase', event.target.checked)}
-              style={{ width: '20px', height: '20px', accentColor: 'var(--accent)' }}
-            />
-            Uppercase
-          </label>
-          <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', minHeight: '44px', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={Boolean(value.box_color)}
-              // The box colour doubles as its on/off switch, here and in the ASS
-              // style: no colour means no block behind the text.
-              onChange={(event) => set('box_color', event.target.checked ? '#000000CC' : null)}
-              style={{ width: '20px', height: '20px', accentColor: 'var(--accent)' }}
-            />
-            Background block
-          </label>
-        </div>
-      </div>
+      <OverlayControls
+        idPrefix={`clip-${clipIndex}-overlay`}
+        value={value}
+        onChange={commit}
+        disabled={locked}
+        textRef={textRef}
+        clipped={clipped}
+      />
 
       {mutation.isError && (
         <p role="alert" style={{ margin: 'var(--space-md) 0 0 0', fontSize: '0.75rem', color: 'var(--error)' }}>

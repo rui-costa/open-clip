@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { TextOverlay } from './TextOverlay';
 import { stubFrameSize } from '../../test/stubFrame';
 import { DEFAULT_OVERLAY_TEXT, type OverlayText } from '../../api';
@@ -75,6 +75,86 @@ describe('TextOverlay', () => {
     render(<TextOverlay overlay={{ ...TITLE, font_size_pct: 8 }} time={0} still />);
     // 8% of the 400px frame.
     expect(block()).toHaveStyle({ fontSize: '32px' });
+  });
+
+  // The lift the burn draws with ASS `Shadow`, and the only one a thumbnail —
+  // one frame, no fade — can carry.
+  it('offsets a hard shadow by a percentage of the frame', () => {
+    render(<TextOverlay overlay={{ ...TITLE, shadow_pct: 1, shadow_color: '#000000' }} time={0} still />);
+    // 1% of the 400px frame, down and right, with no blur radius.
+    expect(block()?.style.textShadow).toContain('4px 4px 0');
+  });
+
+  it('draws no shadow at all when it is turned off', () => {
+    render(<TextOverlay overlay={{ ...TITLE, shadow_pct: 0 }} time={0} still />);
+    expect(block()?.style.textShadow).toBe('');
+  });
+
+  // libass with `BorderStyle: 3` offsets the block rather than the glyphs, so
+  // the preview has to move the same thing or the two disagree.
+  it('shadows the block instead of the glyphs when the title has a box', () => {
+    render(
+      <TextOverlay
+        overlay={{ ...TITLE, shadow_pct: 1, box_color: '#000000CC' }}
+        time={0}
+        still
+      />
+    );
+    expect(block()?.style.textShadow).toBe('');
+    expect(screen.getByText('Cold open').style.boxShadow).toContain('4px 4px 0');
+  });
+
+  // One word in a second colour is what a thumbnail that gets clicked does.
+  it('draws a marked word in the highlight colour', () => {
+    render(
+      <TextOverlay
+        overlay={{ ...TITLE, text: 'we *lost* it', highlight_color: '#FFE000' }}
+        time={0}
+        still
+      />
+    );
+    expect(screen.getByText('lost')).toHaveStyle({ color: '#FFE000' });
+  });
+
+  it('keeps the marks out of the drawn text', () => {
+    const { container } = render(
+      <TextOverlay overlay={{ ...TITLE, text: 'we *lost* it' }} time={0} still />
+    );
+    expect(container.textContent).toBe('we lost it');
+  });
+
+  // A title can legitimately contain an asterisk, and eating it would draw a
+  // title the user did not write.
+  it('leaves a lone asterisk in the text', () => {
+    const { container } = render(
+      <TextOverlay overlay={{ ...TITLE, text: 'rated 5*' }} time={0} still />
+    );
+    expect(container.textContent).toBe('rated 5*');
+  });
+
+  // libass wraps at spaces and cannot break inside a word, so a word wider
+  // than the frame is not wrapped — it is drawn past the edge and cut off.
+  // The preview draws with the same face, so it is the thing that can tell.
+  it('reports a word the burn would cut off', () => {
+    const onOverflow = vi.fn();
+    // jsdom lays nothing out, so both widths have to be stated.
+    const widths = (scrollWidth: number) => {
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get: () => scrollWidth });
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 300 });
+    };
+
+    try {
+      widths(500);
+      render(<TextOverlay overlay={{ ...TITLE, text: 'EVERYTHING' }} time={0} still onOverflow={onOverflow} />);
+      expect(onOverflow).toHaveBeenLastCalledWith(true);
+
+      widths(280);
+      render(<TextOverlay overlay={{ ...TITLE, text: 'WE LOST' }} time={0} still onOverflow={onOverflow} />);
+      expect(onOverflow).toHaveBeenLastCalledWith(false);
+    } finally {
+      delete (HTMLElement.prototype as Partial<HTMLElement>).scrollWidth;
+      delete (HTMLElement.prototype as Partial<HTMLElement>).clientWidth;
+    }
   });
 
   it('is hidden from assistive technology, which reads the clip text instead', () => {

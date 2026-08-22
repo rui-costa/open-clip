@@ -1,6 +1,6 @@
 import React, { useId } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { PipelineController } from '../PipelineController/PipelineController';
+import { PipelineActivity, PipelineController } from '../PipelineController/PipelineController';
 import type { StepStatus } from '../PipelineController/PipelineController';
 import { ClipManager } from '../ClipManagement/ClipManager';
 import {
@@ -11,6 +11,7 @@ import {
   type ClipPreview,
   type Highlight,
   type ProjectMetadata,
+  type StepActivity,
 } from '../../api';
 import { targetAspectRatio } from '../../utils/aspectRatio';
 import { stepLabel } from '../../utils/stepLabels';
@@ -79,6 +80,13 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
   const clipProgress = allStatuses?.progress as unknown as
     | { generated: number; total: number }
     | undefined;
+
+  // Same shape of cast: what each running step is doing, and the backend's own
+  // clock to measure it against.
+  const activity = allStatuses?.activity as unknown as
+    | Record<string, StepActivity>
+    | undefined;
+  const serverNow = allStatuses?.now as unknown as number | undefined;
 
   const sourceUrl = displayMetadata.files?.original_file
     ? getSourceVideoUrl(displayMetadata.project_id, displayMetadata.files.original_file)
@@ -205,6 +213,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
         <section aria-labelledby={pipelineHeadingId}>
           <h2 id={pipelineHeadingId} className="visually-hidden">Pipeline</h2>
           <PipelineController onExecute={onExecuteAction} steps={steps} prominence="lead" />
+          <PipelineActivity steps={steps} activity={activity} now={serverNow} />
         </section>
       )}
 

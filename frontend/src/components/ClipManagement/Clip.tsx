@@ -163,15 +163,22 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
   // source has gone cannot show one.
   const thumbnailWhileStill = wantsThumbnail && !!thumbnail && !!sourceUrl;
 
-  // The title as it stands: what is being typed, or what is stored, or the
-  // values a new one starts from. Stored on the clip, and delivered by the same
+  // The title as it stands: what is being typed, or what the clip resolves to
+  // — its own if it has unlocked one, otherwise the project's — or the values a
+  // new one starts from. Resolved by the backend and delivered by the same
   // preview request the captions arrive on.
   const overlayText = overlayDraft ?? captions?.overlay ?? DEFAULT_OVERLAY_TEXT;
+  // A resolved title is always present now that the project has one, so the
+  // words are what say whether this clip carries a title at all.
+  const hasTitle = !!overlayText.text.trim();
+  // Its own rather than the project's: the icon marks the clip that is the
+  // exception, which is what the caption lock beside it marks too.
+  const ownsTitle = captions ? !captions.overlay_locked : false;
   // Same rule the captions follow: a title already in the file's pixels is not
   // drawn over itself. While the editor is open it is drawn regardless, because
   // that is the only way to see the edit.
   const showTitle =
-    !!overlayText.text.trim() &&
+    hasTitle &&
     overlayText.enabled &&
     (isEditingOverlay || !clip.overlayBurned);
 
@@ -649,9 +656,11 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
           text={
             clip.overlayBurned
               ? 'Overlay text: already in this file — re-render to change it'
-              : showTitle || captions?.overlay
-                ? 'Edit overlay text'
-                : 'Add overlay text'
+              : ownsTitle
+                ? 'Edit this clip\u2019s own overlay text'
+                : hasTitle
+                  ? 'Overlay text: following the project\u2019s'
+                  : 'Add overlay text'
           }
         >
           <Button
@@ -660,7 +669,7 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
             aria-label={
               clip.overlayBurned
                 ? 'Overlay text, already burned into this file'
-                : captions?.overlay
+                : hasTitle
                   ? 'Edit overlay text'
                   : 'Add overlay text'
             }
@@ -677,8 +686,8 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
               ...(clip.overlayBurned
                 ? { backgroundColor: 'var(--success)', color: 'var(--on-success)', borderColor: 'var(--success)' }
                 : {
-                    color: captions?.overlay ? 'var(--accent)' : 'var(--text)',
-                    borderColor: captions?.overlay ? 'var(--accent)' : undefined,
+                    color: ownsTitle ? 'var(--accent)' : 'var(--text)',
+                    borderColor: ownsTitle ? 'var(--accent)' : undefined,
                   }),
             }}
           >
@@ -849,6 +858,7 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
         value={overlayText}
         onChange={setOverlayDraft}
         isBurned={!!clip.overlayBurned}
+        isLocked={captions?.overlay_locked ?? false}
         // The card may be scrolled anywhere, or behind the scrim, so this
         // dialog carries its own picture rather than drawing onto the card.
         preview={overlayPreview}

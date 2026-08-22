@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CaptionStyler } from '../ClipManagement/CaptionStyler';
+import { OverlayStyler } from '../ClipManagement/OverlayStyler';
 import { DescriptionPanel } from './DescriptionPanel';
 import {
   getAspectRatioMap,
@@ -173,6 +174,11 @@ export const ProjectSettingsMenu: React.FC<ProjectSettingsMenuProps> = ({ metada
             variant="inline"
             projectId={metadata.project_id}
             settings={metadata.settings?.captions}
+          />
+          <OverlayStyler
+            variant="inline"
+            projectId={metadata.project_id}
+            overlay={metadata.settings?.overlay}
           />
           <DescriptionPanel
             variant="inline"

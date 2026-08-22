@@ -69,16 +69,23 @@ One clip can break away from the project's style with the padlock button on its 
 > Burning captions in needs an ffmpeg built with libass. The Docker image has one. A local ffmpeg without it still cuts clips and still writes the `.ass` files, but the pixels come out uncaptioned — check with `ffmpeg -filters | grep subtitles`.
 
 ## 5. Overlay Titles
-A clip can carry a title of its own: one piece of text drawn over the picture at the start of the clip and faded out a few seconds later. Unlike captions, this belongs to the single clip you are looking at, so it is edited from that clip's detail page with **Add overlay text**.
+A clip can carry a title: one piece of text drawn over the picture at the start of the clip and faded out a few seconds later. It has two halves — *how* a title is drawn, which is one decision for the whole project, and *what* it says, which is never the same on two clips.
+
+**Overlay titles** in the project's options bar is the first half: font, size, placement, colours, outline, shadow and timing, and nothing about any particular line. It is what every title in the project is drawn in — including the automatic ones on the thumbnails, whose words the model wrote — so restyling here restyles every still at once. **Burn titles into rendered clips** at the top of it decides whether titles reach the video as well; it starts switched off, so a project you never touch burns nothing.
+
+The words are the second half, and they belong to the clip. **Add overlay text** on a clip's card or detail page writes one; the dialog opens on the project's look, so writing a title never means restyling one. **Remove this title** at the foot of that dialog takes it back off, leaving the thumbnail to fall back on the model's line. To give one clip no title against a project that burns them, write its own and untick **Burn this title into rendered clips**.
 
 <img src="../images/overlay_text.png" alt="The overlay text editor" width="420">
 
-1. **Write it**: the text is saved as you type, and drawn over the player behind the dialog as you go. A line break in the box is a line break on the video.
-2. **Time it**: the title starts at the top of the clip by default and stays for three seconds. **Starts at**, **Stays for** and **Fades out over** move all of that; playing the clip shows the real timing, including the fade.
-3. **Style it**: size, position from the top of the frame, width, outline, colours, uppercase and a background block. Like the caption sliders these are percentages of the frame, so they hold at any output resolution.
-4. **Burn it in**: the title is drawn over the preview immediately, but it only reaches the file when the clip is cut. Use **Regenerate clip** on the same page.
+This title is also the text on the clip's thumbnail, which is the thing a viewer actually clicks. That is what the defaults are set for: three to five words, ultra-bold, heavy outline, hard shadow, one word in a second colour.
 
-**Remove this title** at the foot of the dialog takes it off the clip entirely; re-cutting then produces a clip without it.
+1. **Write it**: the text is saved as you type, and drawn over the player behind the dialog as you go. A line break in the box is a line break on the video. Wrap one word in asterisks — `we *lost* everything` — and it is drawn in the marked-word colour, which is what gives the eye somewhere to land. The counter under the box says how many words you are at; past five it says so, because a thumbnail read as a paragraph is not read.
+2. **Time it**: the title starts at the top of the clip by default and stays for three seconds. **Starts at**, **Stays for** and **Fades out over** move all of that; playing the clip shows the real timing, including the fade.
+3. **Style it**: start from **Look** — *Outlined*, *Yellow on black* or *Black on white* — which sets the colours, the outline and the shadow as one group. Yellow on black is the pairing that measures highest on a thumbnail; black on white is the one for dark footage. Everything is then adjustable on its own: size, position from the top of the frame, width, outline, shadow, the four colours, uppercase and a background block. The shadow is a hard offset behind the words, on by default — it is what lifts a title off the picture, and unlike a fade it is still there in the single frame a thumbnail is made of. Like the caption sliders these are percentages of the frame, so they hold at any output resolution. If a word is too wide for the frame at the size you have chosen, the dialog says so: the burn cuts a word off rather than breaking it, so the fix is a smaller size, a wider title, or a line break.
+4. **Check it at feed size**: **Feed size (120px)** under the preview shrinks the whole frame to the width a phone feed gives a thumbnail. It is the only test that matters — if the words do not land at that size, nobody scrolling reads them. The same button is on the thumbnail editor.
+5. **Burn it in**: the title is drawn over the preview immediately, but it only reaches the file when the clip is cut. Use **Regenerate clip** on the same page.
+
+Changing the project's overlay configuration reaches every still immediately, the same way a caption restyle reaches every preview — and, the same way, it only reaches a rendered clip when that clip is cut again. A clip that has written its own title keeps the look it was given; restyle it in its own dialog.
 
 ### Regenerating a single clip
 **Regenerate clip** re-cuts the one clip you are looking at with whatever its settings now say — its title, its captions, and the project's aspect ratio and resolution. Every other rendered clip is left alone, which is the difference between this and re-running the **Clips** step, and it is also how a clip that has never been cut gets rendered on its own.
@@ -90,7 +97,15 @@ Every clip has a thumbnail without being asked for one: the first frame of the c
 
 No picture file is made in advance. A thumbnail is a frame of the clip with text over it, and the app draws both — so what you see on the clip page and on every card *is* the thumbnail, live, updating the moment you change it. The image itself is rendered once, at upload, and attached to the video.
 
-The title on it is worked out rather than typed. It is the clip's own overlay text; a clip that has none uses the hook the model wrote for that moment, then the YouTube title. Editing the overlay text therefore changes the thumbnail too, which is the point: the picture and the opening seconds of the video should not say different things.
+The title on it is worked out rather than typed, in this order:
+
+1. **The clip's own overlay text**, if you wrote one. A line you typed is never overridden, and editing it changes the thumbnail too.
+2. **The thumbnail line the model wrote** for this clip — a handful of words with one of them wrapped in asterisks, which is drawn in the marked-word colour. The Highlights step writes it for the still specifically: it is read at feed size, with no sound and no context, which is a different sentence from the hook. You can see it on the clip page under **Thumbnail text**.
+3. **The hook**, then the YouTube title, for clips found before this existed.
+
+A thumbnail with no words on it is the one outcome worth avoiding, which is why the chain runs that far.
+
+Whichever line wins, it is drawn in the project's overlay configuration — see **Overlay titles** above. That is what makes a project's stills look like one project without anybody typing a title on any of them.
 
 **Edit thumbnail** on the clip's detail page changes the two decisions a machine cannot make:
 

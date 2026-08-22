@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import uuid
 import os
 from datetime import datetime
@@ -367,6 +368,14 @@ class SimpleHandler(BaseHTTPRequestHandler):
         total_clips = len(project.highlights)
         generated_clips = len([h for h in project.highlights if h.is_clip_generated])
         statuses["progress"] = {"generated": generated_clips, "total": total_clips}
+        # What each running step is doing, and since when. A step that reports
+        # nothing still gets an entry with `since` in it, which is what lets the
+        # page say how long it has been running rather than only that it is.
+        statuses["activity"] = pipeline_orchestrator.activity(project_id)
+        # The clock `since` was taken from. Sent so the page measures elapsed
+        # time against the same clock rather than against the browser's, which
+        # can be minutes off and would report a step as running for -3 minutes.
+        statuses["now"] = time.time()
         
         pipeline_config = pipeline_orchestrator.pipeline_config
         for k in pipeline_orchestrator.active_processes:
@@ -529,7 +538,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
         style = caption_service.style(project)
         cues = caption_service.cues(project, highlight, style)
-        overlay = caption_service.overlay(highlight)
+        overlay = caption_service.overlay(project, highlight)
         if not cues and overlay is None:
             self.send_cors_error(404, "This clip has no transcribed words to caption")
             return
@@ -919,12 +928,14 @@ class SimpleHandler(BaseHTTPRequestHandler):
             self.send_cors_error(500, f"Could not start the render: {str(e)}")
 
     def handle_put_clip_overlay(self):
-        """One clip's overlay title, or null to remove it.
+        """One clip's own overlay title, or null to put it back on the project's.
 
         Like the per-clip caption settings, the body is the whole object: the
         editor holds the whole form and saves it, and a patch would say nothing
         about the difference between "no title" and "a title I have not
-        finished typing".
+        finished typing". Null is the lock rather than a delete — a clip that
+        wants no title at all unlocks and switches it off, which is the only
+        way to say that against a project that has one.
         """
         parts = urlparse(self.path).path.split('/')
         try:
@@ -956,6 +967,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     if highlights[clip_index].overlay
                     else None
                 ),
+                "locked": highlights[clip_index].overlay is None,
             })
         except FileNotFoundError:
             self.send_cors_error(404, "Project not found")
@@ -999,6 +1011,20 @@ class SimpleHandler(BaseHTTPRequestHandler):
                         **(data['captions']['overrides'] or {}),
                     }
                 project.settings.captions = CaptionSettings.from_dict(merged)
+            if 'overlay' in data:
+                # Merged for the same reason the captions are: the styler saves
+                # one field at a time. `box_color` survives being set back to
+                # null because an explicit null is still a key in the patch.
+                #
+                # `text` is dropped rather than merged: this setting is how a
+                # title is drawn, not what it says, and a line stored here would
+                # be one line over every clip in the project at once.
+                patch = {k: v for k, v in (data['overlay'] or {}).items() if k != 'text'}
+                project.settings.overlay = OverlayText.from_dict({
+                    **project.settings.overlay.to_dict(),
+                    **patch,
+                    "text": "",
+                })
             # The user can change these mid-run, so only the settings field is written.
             project.set_property("settings", project.settings)
             self.send_json_response({"status": "success", "settings": project.settings.to_dict()})
