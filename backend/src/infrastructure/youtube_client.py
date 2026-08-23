@@ -21,16 +21,6 @@ READ_SCOPES = {
 }
 
 
-class ProcessingUnreadableError(Exception):
-    """This token cannot be told how far along a video's processing is.
-
-    Its own type because it is not a failure of the upload or of the video: it
-    is a token authorised before the readonly scope was asked for, and the only
-    consequence is that a thumbnail has to be attached on a guess instead of on
-    an answer.
-    """
-
-
 class MissingCredentialsError(Exception):
     """No usable YouTube credentials on disk.
 
@@ -67,33 +57,8 @@ class YoutubeClient:
         self.service = googleapiclient.discovery.build("youtube", "v3", credentials=creds)
 
     def can_read_processing(self) -> bool:
-        """Whether this token may ask how far along a video's processing is."""
+        """Whether this token may ask YouTube about the channel's own videos."""
         return bool(READ_SCOPES & set(self.scopes))
-
-    def processing_status(self, video_id: str) -> Optional[str]:
-        """How far YouTube has got with a video: what to wait on before the
-        thumbnail is attached.
-
-        One of "processing", "succeeded", "failed" or "terminated", or None for
-        a video this channel cannot see — deleted, or belonging to someone else.
-
-        Raises ProcessingUnreadableError when the token has no read scope, so
-        the caller can fall back to waiting blindly rather than treat a
-        permission problem as a video that never finishes.
-        """
-        if not self.can_read_processing():
-            raise ProcessingUnreadableError(
-                "This YouTube token was authorised without the readonly scope, so "
-                "the processing state of a video cannot be read. Reconnect the "
-                "channel in Settings to let thumbnails wait for processing to finish."
-            )
-        response = self.service.videos().list(
-            part="processingDetails", id=video_id
-        ).execute()
-        items = response.get("items") or []
-        if not items:
-            return None
-        return items[0].get("processingDetails", {}).get("processingStatus")
 
     def video_exists(self, video_id: str) -> Optional[bool]:
         """Whether this channel can still see the video behind an id.
@@ -161,27 +126,3 @@ class YoutubeClient:
             # in the description is a separate thing and does not create it.
             "studio_url": f"https://studio.youtube.com/video/{video_id}/edit",
         }
-
-    def set_thumbnail(self, video_id: str, file_path: str) -> Dict[str, Any]:
-        """Attaches a custom thumbnail to a video that is already up.
-
-        A separate call because `videos.insert` has no field for one. It can be
-        refused for reasons that have nothing to do with the image — a channel
-        without a verified phone number has no custom thumbnails at all — so
-        the caller treats a failure here as the upload having succeeded
-        without its picture.
-
-        The type is stated rather than guessed from the name: a file the
-        `mimetypes` table does not recognise is sent as application/octet-stream,
-        which YouTube takes and does nothing with.
-
-        Returns the API response, which carries the URLs of the thumbnail
-        YouTube now holds — the only account of what actually landed, since a
-        thumbnail set while the video is still being processed is accepted and
-        then replaced by the one processing generates.
-        """
-        mimetype = "image/png" if file_path.lower().endswith(".png") else "image/jpeg"
-        return self.service.thumbnails().set(
-            videoId=video_id,
-            media_body=googleapiclient.http.MediaFileUpload(file_path, mimetype=mimetype),
-        ).execute()

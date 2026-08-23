@@ -11,7 +11,6 @@ import {
   regenerateClip,
   importClipToPostiz,
   uploadClip,
-  uploadClipThumbnail,
 } from '../../api';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -34,14 +33,6 @@ vi.mock('../../api', async (importOriginal) => ({
   importClipToPostiz: vi.fn().mockResolvedValue({
     status: 'started',
     job: 'test-project-123_postiz_clip_0',
-  }),
-  // Nothing is published by this one: the video keeps its id, and only the
-  // still changes.
-  uploadClipThumbnail: vi.fn().mockResolvedValue({
-    status: 'success',
-    thumbnail_set: true,
-    video_id: 'vid-1',
-    url: 'https://youtu.be/vid-1',
   }),
   getClipThumbnail: vi.fn().mockResolvedValue({
     settings: {
@@ -349,33 +340,6 @@ describe('Clip Component', () => {
       expect(screen.getByRole('dialog')).toHaveTextContent(/How they lost it all/);
       fireEvent.click(screen.getByRole('button', { name: 'UPLOAD' }));
       await waitFor(() => expect(uploadClip).toHaveBeenCalledWith('test-project-123', 0));
-    });
-
-    // The thumbnail on the card can be changed long after the clip went up, so
-    // sending it again belongs beside the upload button rather than on the
-    // detail page alone.
-    it('sends a published clip its thumbnail without publishing anything', async () => {
-      renderClip({ ...renderedClip, youtubeUrl: 'https://youtu.be/vid-1', youtubeVideoId: 'vid-1' });
-
-      fireEvent.click(
-        screen.getByLabelText("Upload this clip's thumbnail to the published video")
-      );
-
-      // No confirmation: the video keeps its id and its views, and only the
-      // still changes.
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-      await waitFor(() =>
-        expect(uploadClipThumbnail).toHaveBeenCalledWith('test-project-123', 0)
-      );
-      expect(uploadClip).not.toHaveBeenCalled();
-    });
-
-    it('offers no such thing for a clip that has not been published', () => {
-      renderClip(renderedClip);
-
-      expect(
-        screen.queryByLabelText("Upload this clip's thumbnail to the published video")
-      ).not.toBeInTheDocument();
     });
 
     it('warns that a published clip would get a second video, not a replacement', () => {

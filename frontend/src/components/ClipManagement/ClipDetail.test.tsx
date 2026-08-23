@@ -12,7 +12,6 @@ import {
   syncPostiz,
   updateClipOverlay,
   uploadClip,
-  uploadClipThumbnail,
   type CaptionStyle,
   type Highlight,
   type OverlayText,
@@ -95,7 +94,6 @@ vi.mock('../../api', () => ({
   updateProjectSettings: vi.fn().mockResolvedValue({ status: 'success' }),
   updateClipOverlay: vi.fn().mockResolvedValue({ status: 'success', overlay: null }),
   uploadClip: vi.fn(),
-  uploadClipThumbnail: vi.fn(),
   regenerateClip: vi.fn(),
   getActiveProcesses: vi.fn().mockResolvedValue([]),
   // Inline rather than the `overlayText` below: a mock factory is hoisted above
@@ -239,7 +237,6 @@ describe('ClipDetail Component', () => {
     // and the tests asserting that nothing was uploaded pass or fail on
     // ordering rather than on behaviour.
     vi.mocked(uploadClip).mockReset();
-    vi.mocked(uploadClipThumbnail).mockReset();
     // Same reasoning: a sync from one test would otherwise count as a sync in
     // the next, and "this project asks nothing of Postiz" would pass or fail on
     // ordering.
@@ -463,8 +460,6 @@ describe('ClipDetail Component', () => {
 
     await waitFor(() => expect(screen.queryByRole('link', { name: /Studio/i })).toBeNull());
     expect(screen.queryByText(/youtube\.com\/watch/)).toBeNull();
-    // And the button that would send a thumbnail to it is gone with it.
-    expect(screen.queryByRole('button', { name: /Upload thumbnail to YouTube/i })).toBeNull();
   });
 
   // No channel connected, no read scope, no network. Not being able to ask is
@@ -492,50 +487,6 @@ describe('ClipDetail Component', () => {
     renderDetail('0');
 
     expect(await screen.findByRole('link', { name: /Studio/i })).toBeDefined();
-  });
-
-  // A thumbnail edited after the clip went up, or a clip published before the
-  // uploader sent the rendered file at all. The video is untouched, so this is
-  // not behind the publish confirmation.
-  it('sends a published clip its current thumbnail without publishing again', async () => {
-    vi.mocked(getProjectMetadata).mockResolvedValue(
-      project([
-        highlight({
-          viral_hook_text: 'PUBLISHED',
-          is_clip_generated: true,
-          generated_clip_filename: 'first.mp4',
-          youtube_video_id: 'abc123',
-          youtube_url: 'https://youtube.com/watch?v=abc123',
-        }),
-      ])
-    );
-    vi.mocked(uploadClipThumbnail).mockResolvedValue({
-      status: 'success',
-      thumbnail_set: true,
-      video_id: 'abc123',
-      url: 'https://youtube.com/watch?v=abc123',
-    });
-
-    renderDetail('0');
-
-    fireEvent.click(await screen.findByRole('button', { name: /Upload thumbnail to YouTube/i }));
-
-    await waitFor(() => expect(uploadClipThumbnail).toHaveBeenCalledWith('test-project', 0));
-    expect(uploadClip).not.toHaveBeenCalled();
-    expect(await screen.findByText(/Thumbnail sent to YouTube/i)).toBeInTheDocument();
-  });
-
-  it('offers nothing of the sort for a clip that was never published', async () => {
-    vi.mocked(getProjectMetadata).mockResolvedValue(
-      project([highlight({ is_clip_generated: true, generated_clip_filename: 'first.mp4' })])
-    );
-
-    renderDetail('0');
-
-    await screen.findByRole('button', { name: /Upload to YouTube/i });
-    expect(
-      screen.queryByRole('button', { name: /Upload thumbnail to YouTube/i })
-    ).not.toBeInTheDocument();
   });
 
   it('draws the captions the clipper would burn in over the preview', async () => {

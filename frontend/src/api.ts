@@ -770,9 +770,9 @@ export const updateSettings = async (payload: { settings: any, pipeline_config?:
  *
  * `missing_scopes` is not a broken connection: a token authorised before a
  * scope was added still uploads. It is listed because one of those scopes is
- * what lets the uploader wait for YouTube to finish processing a video before
- * attaching its thumbnail — without it the thumbnail is attached on a guess and
- * can be overwritten by the one YouTube generates.
+ * what lets this application ask whether a video it published is still on
+ * YouTube — without it a deleted video leaves its record behind, and the clip
+ * page goes on offering a dead link.
  */
 export type YoutubeStatus = {
   connected: boolean;
@@ -896,22 +896,6 @@ export const importClipToPostiz = async (
   clipIndex: number
 ): Promise<{ status: string; job: string }> => {
   return apiRequest(`/project/${projectId}/clip/${clipIndex}/postiz`, {
-    method: 'POST',
-  });
-};
-
-/**
- * Puts a published clip's current thumbnail on its video.
- *
- * Not another upload: the video keeps its id, its views and its comments, and
- * only the still changes. For a clip whose picture was changed after it went
- * up — or was published before the uploader sent the rendered file at all.
- */
-export const uploadClipThumbnail = async (
-  projectId: string,
-  clipIndex: number
-): Promise<{ status: string; thumbnail_set: boolean; video_id: string; url: string | null }> => {
-  return apiRequest(`/project/${projectId}/clip/${clipIndex}/thumbnail/upload`, {
     method: 'POST',
   });
 };

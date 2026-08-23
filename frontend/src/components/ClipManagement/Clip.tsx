@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { Button } from '../Button';
 import {
-  uploadClipThumbnail,
   getClipVideoUrl,
   getClipCaptions,
   getClipThumbnail,
@@ -162,7 +161,6 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
   // What the overlay editor is typing, held here so the card's own picture
   // redraws per keystroke rather than waiting for the save to come back.
   const [overlayDraft, setOverlayDraft] = useState<OverlayText | null>(null);
-  const [isSendingThumbnail, setIsSendingThumbnail] = useState(false);
   // One banner for both actions on this card: an upload and a re-cut are the
   // two things it can report, and only one of them runs at a time.
   const [actionResult, setActionResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -342,24 +340,6 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
   const handleRegenerate = () => {
     setActionResult(null);
     void startRender();
-  };
-
-  const handleUploadThumbnail = async () => {
-    if (isSendingThumbnail) return;
-    setActionResult(null);
-    setIsSendingThumbnail(true);
-    try {
-      await uploadClipThumbnail(projectId, clip.index);
-      setActionResult({ ok: true, message: 'Thumbnail sent to YouTube' });
-    } catch (error) {
-      console.error('Thumbnail upload failed:', error);
-      setActionResult({
-        ok: false,
-        message: describeRequestFailure(error, 'Could not set the thumbnail'),
-      });
-    } finally {
-      setIsSendingThumbnail(false);
-    }
   };
 
   const handleUpload = () => {
@@ -591,48 +571,6 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
             )}
           </Button>
         </Tooltip>
-
-        {/* Only for a clip that is already on YouTube, and deliberately not
-            behind the publish confirmation: the video keeps its id, its views
-            and its comments, and only the still changes. This is how a
-            thumbnail edited after the upload reaches the video, and how a clip
-            published before the uploader sent the file on disk gets it. */}
-        {clip.youtubeVideoId && (
-          <Tooltip
-            text={
-              isSendingThumbnail
-                ? 'Sending the thumbnail…'
-                : 'Put this clip’s thumbnail on the video already published'
-            }
-          >
-            <Button
-              variant="ghost"
-              onClick={handleUploadThumbnail}
-              disabled={isSendingThumbnail || isUploading || isImporting}
-              aria-busy={isSendingThumbnail}
-              aria-label="Upload this clip's thumbnail to the published video"
-              style={{
-                padding: '0.25rem',
-                minWidth: '44px',
-                minHeight: '44px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              {isSendingThumbnail ? '...' : (
-                // A picture with an arrow leaving it: the still, going up.
-                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="5" width="18" height="14" rx="2" />
-                  <circle cx="8.5" cy="10" r="1.5" />
-                  <polyline points="8 19 13 13 17 16" />
-                  <polyline points="19 11 19 3" />
-                  <polyline points="16 6 19 3 22 6" />
-                </svg>
-              )}
-            </Button>
-          </Tooltip>
-        )}
 
         {/* Not behind a confirmation, unlike the upload beside it: an import
             files a draft on the user's own Postiz calendar, which reaches

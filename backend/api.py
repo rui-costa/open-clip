@@ -36,7 +36,6 @@ from backend.src.services.captions import CaptionService
 from backend.src.services.thumbnailer import SourceVideoMissingError, Thumbnailer
 from backend.src.services.uploader import (
     DEFAULT_PRIVACY,
-    ClipNotPublishedError,
     UploadInProgressError,
 )
 from backend.src.infrastructure.postiz_client import (
@@ -976,45 +975,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
             logger.exception(f"Upload failed for project={project_id} clip={clip_id}")
             self.send_cors_error(500, f"Upload failed: {str(e)}")
 
-    def handle_post_upload_thumbnail(self):
-        """Puts a published clip's current thumbnail on its video.
-
-        The video is untouched — same id, same views — so this is not the
-        irreversible action `upload` is, and it can be pressed as often as the
-        picture changes.
-        """
-        parts = urlparse(self.path).path.split('/')
-        try:
-            project_id, clip_id = parts[2], int(parts[4])
-        except (IndexError, ValueError):
-            self.send_cors_error(404, "No clip at that index")
-            return
-
-        try:
-            result = pipeline_orchestrator.upload_thumbnail(project_id, clip_id)
-            if not result["thumbnail_set"]:
-                # The video is fine and the picture is not on it: an unverified
-                # channel, or a thumbnail that would not render.
-                self.send_cors_error(
-                    502,
-                    "YouTube would not take the thumbnail. The video is untouched.",
-                )
-                return
-            self.send_json_response({"status": "success", **result})
-        except FileNotFoundError:
-            self.send_cors_error(404, "Project not found")
-        except IndexError:
-            self.send_cors_error(404, "No clip at that index")
-        except ClipNotPublishedError as e:
-            self.send_cors_error(400, str(e))
-        except UploadInProgressError as e:
-            self.send_cors_error(409, str(e))
-        except MissingCredentialsError as e:
-            self.send_cors_error(401, str(e))
-        except Exception as e:
-            logger.exception(f"Thumbnail upload failed for project={project_id} clip={clip_id}")
-            self.send_cors_error(500, f"Could not set the thumbnail: {str(e)}")
-
     def handle_post_postiz_clip(self):
         """Cuts one clip afresh and files it in Postiz.
 
@@ -1254,7 +1214,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
         elif self.path == '/youtube/connect/cancel': self.handle_post_youtube_cancel()
         elif self.path.startswith('/project/upload/'): self.handle_post_upload()
         elif self.path == '/project/step': self.handle_post_step()
-        elif self.path.endswith('/thumbnail/upload'): self.handle_post_upload_thumbnail()
         elif self.path.endswith('/upload'): self.handle_post_upload_clip()
         elif self.path.endswith('/postiz'): self.handle_post_postiz_clip()
         elif self.path.endswith('/regenerate'): self.handle_post_regenerate_clip()

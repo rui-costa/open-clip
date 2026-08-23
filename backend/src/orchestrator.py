@@ -411,30 +411,6 @@ class PipelineOrchestrator:
         thread.start()
         return key
 
-    def upload_thumbnail(self, project_id: str, clip_index: int) -> Dict[str, Any]:
-        """Sets one published clip's current thumbnail on its video.
-
-        Synchronous, unlike `upload_clip`: nothing is cut and nothing is
-        encoded, only one still is sent about a video that is already public,
-        so the user who pressed the button can be handed the outcome. Shares
-        that method's process key, so a clip cannot be published and
-        re-thumbnailed at the same moment.
-        """
-        key = f"{project_id}_upload_clip_{clip_index}"
-        with self._lock:
-            if key in self.active_processes:
-                raise UploadInProgressError("This clip is already being uploaded.")
-            self.active_processes[key] = time.time()
-
-        try:
-            project = Project(project_id)
-            uploader = self.services.get("upload")
-            if uploader is None:
-                raise RuntimeError("No upload service is configured.")
-            return uploader.upload_thumbnail(project, clip_index)
-        finally:
-            self._unregister_process(key)
-
     def regenerate_clip(self, project_id: str, clip_index: int) -> str:
         """Re-cuts one clip in the background and returns the job key to watch.
 

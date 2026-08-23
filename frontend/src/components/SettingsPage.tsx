@@ -393,13 +393,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
               : (youtube?.reason || 'No channel connected.')}
           </span>
 
-          {/* Not an error: uploads work without it. It is the reason a
-              thumbnail can be replaced by YouTube's own minutes later. */}
+          {/* Not an error: uploads work without it. It is the reason a clip can
+              go on claiming to be published after its video has been deleted. */}
           {youtube?.connected && (youtube.missing_scopes?.length ?? 0) > 0 && (
             <span style={{ fontSize: '0.8rem', color: 'var(--error)', fontWeight: 'bold' }}>
-              Missing permission: {youtube.missing_scopes?.join(', ')}. Thumbnails are
-              attached on a guess and may be overwritten while YouTube processes the
-              video. Reconnect to grant it.
+              Missing permission: {youtube.missing_scopes?.join(', ')}. A clip whose video
+              has been deleted on YouTube cannot be noticed, so its page keeps a dead
+              link. Reconnect to grant it.
             </span>
           )}
 

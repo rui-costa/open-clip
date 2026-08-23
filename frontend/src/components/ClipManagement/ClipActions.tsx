@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getClipPublication, getStudioEditUrl, uploadClipThumbnail, type UploadPrivacy } from '../../api';
+import { getClipPublication, getStudioEditUrl, type UploadPrivacy } from '../../api';
 import { formatPublishAt } from '../../utils/uploadSchedule';
 import { Button } from '../Button';
 import { ConfirmationModal } from '../ConfirmationModal';
@@ -121,7 +121,6 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
   // not shown for the moment it takes the project to come back without it.
   const isPublished = !!youtubeVideoId && !(publication?.checked && !publication.published);
 
-  const [isSendingThumbnail, setIsSendingThumbnail] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const [actionResult, setActionResult] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -173,24 +172,6 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
     setIsConfirming(false);
     setActionResult(null);
     void startUpload();
-  };
-
-  const handleUploadThumbnail = async () => {
-    if (isSendingThumbnail) return;
-    setIsSendingThumbnail(true);
-    setActionResult(null);
-    try {
-      await uploadClipThumbnail(projectId, clipIndex);
-      setActionResult({ ok: true, message: 'Thumbnail sent to YouTube' });
-    } catch (error) {
-      console.error('Thumbnail upload failed:', error);
-      setActionResult({
-        ok: false,
-        message: describeRequestFailure(error, 'Could not set the thumbnail.'),
-      });
-    } finally {
-      setIsSendingThumbnail(false);
-    }
   };
 
   // A column of full-width rows rather than the default centred pill: these sit
@@ -255,21 +236,6 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
               ? 'Unlisted: anyone with the link can watch it.'
               : 'Private: only you can watch it.'}
         </p>
-      )}
-      {isPublished && (
-        // Not another upload, and deliberately not behind a confirmation: the
-        // video keeps its id, its views and its comments, and only the picture
-        // changes. For a thumbnail edited after the clip went up — and for the
-        // clips published before the uploader sent the rendered file at all.
-        <Button
-          variant="ghost"
-          size="sm"
-          style={rowStyle}
-          onClick={handleUploadThumbnail}
-          disabled={isSendingThumbnail || isUploading || isImporting}
-        >
-          {isSendingThumbnail ? 'Sending the thumbnail…' : 'Upload thumbnail to YouTube'}
-        </Button>
       )}
       {isPublished && youtubeVideoId && (
         // The one part of publishing this app cannot finish. A Short's related
