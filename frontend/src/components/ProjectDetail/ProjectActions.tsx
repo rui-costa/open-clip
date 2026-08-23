@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { PipelineActivity, PipelineController } from '../PipelineController/PipelineController';
+import { PipelineActivity, PipelineController, isStepDone } from '../PipelineController/PipelineController';
 import type { StepStatus } from '../PipelineController/PipelineController';
 import { ProjectSettingsMenu } from './ProjectSettingsMenu';
 import { HighlightPanel } from './HighlightPanel';
@@ -75,8 +75,16 @@ export const ProjectActions: React.FC<ProjectActionsProps> = ({
     refetchInterval: isActive ? 1000 : (false as const),
   });
 
+  // Why a step failed, or which part of it is still missing. Written on the
+  // project rather than held for the run, so it outlives the step that produced
+  // it — which is the only reason a partial run can still say what it skipped
+  // when the panel is opened an hour later.
+  const stepErrors = allStatuses?.step_errors as unknown as
+    | Record<string, string>
+    | undefined;
+
   const statusKey = (pipelineConfig?.execution_order || [])
-    .map((stepName) => allStatuses?.[stepName] ?? 'locked')
+    .map((stepName) => `${allStatuses?.[stepName] ?? 'locked'}:${stepErrors?.[stepName] ?? ''}`)
     .join('|');
 
   const steps = React.useMemo(
@@ -87,6 +95,7 @@ export const ProjectActions: React.FC<ProjectActionsProps> = ({
         status: (allStatuses?.[stepName] as StepStatus) || 'locked',
         isLlm: pipelineConfig?.steps?.[stepName]?.llm === true,
         dependsOn: (pipelineConfig?.steps?.[stepName]?.depends_on ?? []).map(stepLabel),
+        error: stepErrors?.[stepName],
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- statusKey is
     // exactly the part of allStatuses this reads.
@@ -100,18 +109,22 @@ export const ProjectActions: React.FC<ProjectActionsProps> = ({
 
   const anyRunning = steps.some((step) => step.status === 'running');
   const anyFailed = steps.some((step) => step.status === 'error');
-  const allDone =
-    steps.length > 0 && steps.every((step) => step.status === 'completed' || step.status === 'executed');
+  const anyPartial = steps.some((step) => step.status === 'partial');
+  const allDone = steps.length > 0 && steps.every((step) => isStepDone(step.status));
 
   // Folded away is not the same as hidden: whatever the row would have said
-  // about itself, the trigger says.
+  // about itself, the trigger says. A partial run has to reach this collapsed
+  // state too — it is the state the user is in when they close the panel and
+  // come back tomorrow, and "done" there is the whole bug.
   const badge = anyFailed
     ? { label: 'failed', style: { background: 'var(--error)', color: 'var(--bg)' } }
     : anyRunning
       ? { label: 'running', style: { background: 'var(--accent)', color: 'var(--bg)' } }
-      : allDone
-        ? { label: 'done', style: { background: 'var(--success)', color: 'var(--on-success)' } }
-        : null;
+      : anyPartial
+        ? { label: 'partial', style: { background: 'var(--warning)', color: 'var(--on-warning)' } }
+        : allDone
+          ? { label: 'done', style: { background: 'var(--success)', color: 'var(--on-success)' } }
+          : null;
 
   // Opened for you when the pipeline starts doing something or fails — the two
   // moments it is worth the room. Set rather than derived, so closing it again

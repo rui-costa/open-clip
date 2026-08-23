@@ -21,39 +21,52 @@ PROJECT_ID = "test-project"
 
 
 @pytest.fixture
-def status_url(tmp_path, monkeypatch):
-    """One project with a rendered clip and a step already finished."""
-    project_dir = tmp_path / "projects" / PROJECT_ID
-    project_dir.mkdir(parents=True)
-    (project_dir / "metadata.json").write_text(json.dumps({
-        "project_id": PROJECT_ID,
-        "name": "Test Project",
-        "created_at": datetime.now().isoformat(),
-        "files": {},
-        "highlights": [{
-            "highlight_text": "And we just lost", "viral_hook_text": "",
-            "video_description_for_x": "", "video_description_for_reddit": "",
-            "video_description_for_linkedin": "", "video_title_for_youtube_short": "",
-            "start": 10.0, "end": 14.0, "is_clip_generated": True,
-        }],
-        "video_metadata": {"components": [], "top_recommendations": []},
-        "settings": {"aspect_ratio": "9:16", "resolution": "1080p"},
-        "status": None,
-        "step_statuses": {"transcript": "completed", "postiz": "running"},
-        "step_errors": {},
-    }))
-    monkeypatch.chdir(tmp_path)
+def serve(tmp_path, monkeypatch):
+    """Serves one project with a rendered clip, at the step statuses given."""
+    servers = []
 
-    server = ThreadingHTTPServer(('127.0.0.1', 0), SimpleHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
+    def start(step_statuses):
+        project_dir = tmp_path / "projects" / PROJECT_ID
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / "metadata.json").write_text(json.dumps({
+            "project_id": PROJECT_ID,
+            "name": "Test Project",
+            "created_at": datetime.now().isoformat(),
+            "files": {},
+            "highlights": [{
+                "highlight_text": "And we just lost", "viral_hook_text": "",
+                "video_description_for_x": "", "video_description_for_reddit": "",
+                "video_description_for_linkedin": "", "video_title_for_youtube_short": "",
+                "start": 10.0, "end": 14.0, "is_clip_generated": True,
+            }],
+            "video_metadata": {"components": [], "top_recommendations": []},
+            "settings": {"aspect_ratio": "9:16", "resolution": "1080p"},
+            "status": None,
+            "step_statuses": step_statuses,
+            "step_errors": {},
+        }))
+        monkeypatch.chdir(tmp_path)
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), SimpleHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        servers.append((server, thread))
         host, port = server.server_address[:2]
-        yield f"http://{host}:{port}/project/{PROJECT_ID}/execution_status"
+        return f"http://{host}:{port}/project/{PROJECT_ID}/execution_status"
+
+    try:
+        yield start
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+        for server, thread in servers:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+
+@pytest.fixture
+def status_url(serve):
+    """One project with a rendered clip and a step already finished."""
+    return serve({"transcript": "completed", "postiz": "running"})
 
 
 def test_answers_with_the_project_s_step_statuses(status_url):
@@ -106,3 +119,28 @@ def test_a_step_that_failed_says_why(status_url):
 
     # Always present, like `activity`: the page reads it without checking.
     assert isinstance(payload["step_errors"], dict)
+
+
+def test_a_partly_done_step_is_reported_as_partial(serve):
+    payload = json.loads(urllib.request.urlopen(serve({"clipper": "partial"})).read())
+
+    # Passed through rather than folded into "completed" or "error": the page
+    # paints it amber and offers to finish it.
+    assert payload["clipper"] == "partial"
+
+
+def test_a_partly_done_dependency_does_not_lock_the_steps_after_it(serve):
+    # Nineteen of twenty clips cut is nineteen clips' worth of work the next
+    # step can do. Locking it would leave the user with nothing rather than
+    # with most of it.
+    url = serve({"transcription": "completed", "highlights": "partial"})
+    payload = json.loads(urllib.request.urlopen(url).read())
+
+    assert payload["clipper"] == "todo"
+    assert payload["postiz"] == "todo"
+
+
+def test_a_step_whose_dependency_never_ran_is_still_locked(serve):
+    payload = json.loads(urllib.request.urlopen(serve({})).read())
+
+    assert payload["clipper"] == "locked"

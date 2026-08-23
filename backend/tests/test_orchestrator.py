@@ -253,3 +253,68 @@ def test_rerunning_a_step_leaves_downstream_steps_that_never_ran(project_root):
     # Nothing to invalidate: wiping the clips directory of a step that has no
     # output is pure risk.
     assert clipper.reset_calls == 0
+
+
+# --- Resuming a step versus starting it over --------------------------------
+
+class ResumableService(RecordingService):
+    """A service that can tell a resume from a run that starts over."""
+
+    def __init__(self):
+        super().__init__()
+        self.full_calls = []
+
+    def execute(self, project, full=False):
+        self.full_calls.append(full)
+
+
+def test_a_step_pressed_on_its_own_resumes(project_root):
+    # The clips already cut, the videos already published and the drafts
+    # already filed are the point of pressing it again: it finishes the job
+    # rather than repeating it.
+    clipper = ResumableService()
+    orchestrator = make_orchestrator({"clipper": clipper})
+    write_statuses(project_root, {"transcription": "completed", "highlights": "completed"})
+
+    orchestrator.run_step(PROJECT_ID, "clipper")
+    orchestrator.active_project_orchestrators[PROJECT_ID].join(timeout=5)
+
+    assert clipper.full_calls == [False]
+
+
+def test_the_whole_pipeline_run_starts_from_nothing(project_root):
+    transcription = ResumableService()
+    orchestrator = make_orchestrator({"transcription": transcription})
+
+    orchestrator.run_pipeline(PROJECT_ID)
+    orchestrator.active_project_orchestrators[PROJECT_ID].join(timeout=5)
+
+    # A fake that never writes a status is re-triggered by the loop until it
+    # gives up, so what matters is that every one of those runs was a full one.
+    assert transcription.full_calls
+    assert all(transcription.full_calls)
+
+
+class PlainService(RecordingService):
+    """A service whose `execute` takes nothing but the project, like most."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+
+    def execute(self, project):
+        self.calls += 1
+
+
+def test_a_service_whose_execute_takes_only_a_project_is_not_handed_the_flag(project_root):
+    # Most steps do one thing once and have nothing to resume. Passing them a
+    # keyword they never declared would be a TypeError on every run — swallowed
+    # by the thread's own except, so the step would just silently never happen.
+    plain = PlainService()
+    orchestrator = make_orchestrator({"clipper": plain})
+    write_statuses(project_root, {"transcription": "completed", "highlights": "completed"})
+
+    orchestrator.run_step(PROJECT_ID, "clipper", full=True)
+    orchestrator.active_project_orchestrators[PROJECT_ID].join(timeout=5)
+
+    assert plain.calls == 1

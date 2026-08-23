@@ -81,6 +81,7 @@ reservation.
 *   **Automated Clipping**: Efficient video splitting and processing.
 *   **Animated Captions**: Word-by-word karaoke subtitles built from the transcript, styled and previewed in the browser before they are burned into a clip.
 *   **Shorts Thumbnails**: Every clip shows the still it would be published with — by default its first frame, with the clip's title drawn on and no subtitles — drawn live in the browser, with any frame choosable instead, subtitles shown and extra text added. The picture itself is rendered at upload.
+*   **YouTube Privacy and Scheduling**: Choose what an upload makes — private, unlisted, public, or scheduled. A scheduled clip goes up private with a publish time on it and YouTube turns it public itself; pick the day it starts, how many clips go public per day, and the hours of the day they are spread between. Set as the default in Settings, and per project where one project should not go public on the same terms as the rest.
 *   **Postiz Import**: Send a finished clip — or a whole project — to [Postiz](https://postiz.com) as a draft post per connected channel, video attached and text already written, ready to read and send. YouTube is published from here; everything else goes through the scheduler you already run.
 *   **Metadata Management**: Track project details via JSON metadata.
 *   **Containerized Workflow**: Simple setup using Docker.

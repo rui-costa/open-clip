@@ -131,3 +131,75 @@ describe('SettingsPage YouTube channel', () => {
     expect(screen.getByText(/Add the client secrets above first/)).toBeInTheDocument();
   });
 });
+
+/**
+ * Waits for one setting to have been saved.
+ *
+ * The payload alone: react-query hands the mutation function a context object
+ * as a second argument, so asserting on the whole call never matches.
+ */
+const saved = (
+  update: ReturnType<typeof vi.spyOn<typeof api, 'updateSettings'>>,
+  settings: Record<string, unknown>
+) =>
+  waitFor(() =>
+    expect(update.mock.calls.map((call) => call[0])).toContainEqual({ settings })
+  );
+
+describe('SettingsPage upload privacy', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'getYoutubeStatus').mockResolvedValue({
+      connected: true,
+      has_client_secrets: true,
+      privacy: 'private',
+    });
+  });
+
+  it('starts on private, which is the one that reaches nobody by accident', async () => {
+    renderPage();
+
+    expect(await screen.findByLabelText(/What an upload makes/)).toHaveValue('private');
+  });
+
+  it('asks for a calendar only once the uploads are scheduled', async () => {
+    // Installed before the page is rendered: react-query holds the mutation
+    // function it was given, so a spy set up afterwards is never called.
+    const update = vi.spyOn(api, 'updateSettings').mockResolvedValue({ status: 'success' } as never);
+
+    renderPage();
+    await screen.findByLabelText(/What an upload makes/);
+
+    expect(screen.queryByLabelText(/First clip goes public on/)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText(/What an upload makes/), {
+      target: { value: 'schedule' },
+    });
+
+    await saved(update, { youtube_privacy: 'schedule' });
+  });
+
+  it('saves the day a scheduled run begins and how it is spread', async () => {
+    vi.spyOn(api, 'getSettings').mockResolvedValue({
+      ...settings,
+      settings: { ...settings.settings, youtube_privacy: 'schedule' },
+    } as never);
+    const update = vi.spyOn(api, 'updateSettings').mockResolvedValue({ status: 'success' } as never);
+
+    renderPage();
+
+    fireEvent.change(await screen.findByLabelText(/First clip goes public on/), {
+      target: { value: '2026-09-01' },
+    });
+    await saved(update, { youtube_schedule_start_date: '2026-09-01' });
+
+    fireEvent.change(screen.getByLabelText(/How many go public per day/), { target: { value: '2' } });
+    await saved(update, { youtube_schedule_per_day: 2 });
+
+    // Nine to nine unless somebody says otherwise, and picked on this
+    // machine's clock — which is the one thing the numbers cannot say.
+    expect(screen.getByLabelText(/From/)).toHaveValue('9');
+    expect(screen.getByLabelText(/^to$/)).toHaveValue('21');
+    fireEvent.change(screen.getByLabelText(/From/), { target: { value: '8' } });
+    await saved(update, { youtube_schedule_day_start_hour: 8 });
+  });
+});

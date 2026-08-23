@@ -1,0 +1,160 @@
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { UploadPanel } from './UploadPanel';
+import { getYoutubeStatus, updateProjectSettings, type UploadProjectSettings } from '../../api';
+
+vi.mock('../../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api')>();
+  return {
+    ...actual,
+    updateProjectSettings: vi.fn(async () => ({ status: 'ok' })),
+    getYoutubeStatus: vi.fn(async () => ({
+      connected: true,
+      has_client_secrets: true,
+      // What Settings says, which is what a project follows until it disagrees.
+      privacy: 'unlisted' as const,
+    })),
+  };
+});
+
+/** A project that has no opinion about anything, which is every new project. */
+const FOLLOWING: UploadProjectSettings = {
+  privacy: null,
+  per_day: null,
+  start_date: null,
+  day_start_hour: null,
+  day_end_hour: null,
+};
+
+const open = async (settings?: Partial<UploadProjectSettings>) => {
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <UploadPanel projectId="p1" settings={settings && { ...FOLLOWING, ...settings }} />
+    </QueryClientProvider>
+  );
+  fireEvent.click(screen.getByRole('button', { name: /YouTube/ }));
+  await waitFor(() => expect(getYoutubeStatus).toHaveBeenCalled());
+  await screen.findByLabelText(/What an upload makes/);
+};
+
+describe('UploadPanel', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // The default has to be named rather than called "the default": a user who
+  // has to go and look it up cannot tell what this project would publish.
+  it('names the application default a project is following', async () => {
+    await open();
+
+    expect(screen.getByText('Default')).toBeDefined();
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: /Whatever Settings says.*Unlisted/ })).toBeDefined()
+    );
+    expect(updateProjectSettings).not.toHaveBeenCalled();
+  });
+
+  it('gives the project its own privacy when one is picked', async () => {
+    await open();
+
+    fireEvent.change(screen.getByLabelText(/What an upload makes/), { target: { value: 'public' } });
+
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', { upload: { privacy: 'public' } })
+    );
+  });
+
+  it('lets a project that chose its own privacy follow the default again', async () => {
+    await open({ privacy: 'public' });
+
+    expect(screen.getByText('Public')).toBeDefined();
+    fireEvent.change(screen.getByLabelText(/What an upload makes/), { target: { value: '' } });
+
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', { upload: { privacy: null } })
+    );
+  });
+
+  // The dates say nothing about a clip that is public the moment it lands, and
+  // a form full of controls that change nothing is a form nobody can read.
+  it('asks for a calendar only when the clips are scheduled', async () => {
+    await open({ privacy: 'private' });
+
+    expect(screen.queryByLabelText(/First clip goes public on/)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText(/What an upload makes/), { target: { value: 'schedule' } });
+    await waitFor(() => expect(updateProjectSettings).toHaveBeenCalled());
+  });
+
+  it('shows the calendar to a project whose own privacy is a schedule', async () => {
+    await open({ privacy: 'schedule', start_date: '2026-09-01' });
+
+    expect(screen.getByLabelText(/First clip goes public on/)).toHaveValue('2026-09-01');
+
+    fireEvent.change(screen.getByLabelText(/First clip goes public on/), {
+      target: { value: '2026-09-08' },
+    });
+
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', { upload: { start_date: '2026-09-08' } })
+    );
+  });
+
+  // Following a scheduled default is being on a schedule: the fields have to
+  // be reachable without first restating the privacy this project agrees with.
+  it('shows the calendar to a project following a scheduled default', async () => {
+    vi.mocked(getYoutubeStatus).mockResolvedValueOnce({
+      connected: true,
+      has_client_secrets: true,
+      privacy: 'schedule',
+    });
+
+    await open();
+
+    await screen.findByLabelText(/First clip goes public on/);
+  });
+
+  it('sends an emptied date as following Settings rather than as a blank day', async () => {
+    await open({ privacy: 'schedule', start_date: '2026-09-01' });
+    const date = screen.getByLabelText(/First clip goes public on/);
+
+    // Cleared, then left: a date input reads empty half-typed too, so the
+    // empty is only an answer once the user is out of the field.
+    fireEvent.change(date, { target: { value: '' } });
+    expect(updateProjectSettings).not.toHaveBeenCalled();
+
+    fireEvent.blur(date, { target: { value: '' } });
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', { upload: { start_date: null } })
+    );
+  });
+
+  // 0 is "all at the same moment" and an empty select is "follow Settings".
+  // Sending 0 for both publishes a project the user never scheduled.
+  it('tells all-at-once apart from having no opinion', async () => {
+    await open({ privacy: 'schedule' });
+
+    fireEvent.change(screen.getByLabelText(/How many go public per day/), { target: { value: '0' } });
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', { upload: { per_day: 0 } })
+    );
+
+    fireEvent.change(screen.getByLabelText(/How many go public per day/), { target: { value: '' } });
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', { upload: { per_day: null } })
+    );
+  });
+
+  it('saves the hours the day is spread between', async () => {
+    await open({ privacy: 'schedule' });
+
+    fireEvent.change(screen.getByLabelText(/From/), { target: { value: '8' } });
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', { upload: { day_start_hour: 8 } })
+    );
+
+    fireEvent.change(screen.getByLabelText(/^to$/), { target: { value: '18' } });
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', { upload: { day_end_hour: 18 } })
+    );
+  });
+});

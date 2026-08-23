@@ -18,6 +18,7 @@ from backend.src.dataclasses.data import (
     PostizSettings,
     Project,
     ThumbnailSettings,
+    UploadSettings,
 )
 from backend.src.infrastructure.font_metrics import resolve_face
 from backend.src.registry import list_projects, delete_project
@@ -34,6 +35,7 @@ from backend.src.infrastructure.youtube_auth import (
 from backend.src.services.captions import CaptionService
 from backend.src.services.thumbnailer import SourceVideoMissingError, Thumbnailer
 from backend.src.services.uploader import (
+    DEFAULT_PRIVACY,
     ClipNotPublishedError,
     UploadInProgressError,
 )
@@ -54,6 +56,7 @@ from backend.src.services.description_builder import (
     resolve_template,
 )
 from backend.src.orchestrator import (
+    DONE_STATUSES,
     ClipRegenerationInProgressError,
     PipelineOrchestrator,
     ThumbnailInProgressError,
@@ -242,6 +245,10 @@ class SimpleHandler(BaseHTTPRequestHandler):
         """
         status = token_status()
         status["has_client_secrets"] = bool(settings_manager.get("youtube_client_secrets"))
+        # What an upload makes when a project has no opinion, so the panel on a
+        # project can name the default it is following rather than say "the
+        # default" and leave the user to go and look it up.
+        status["privacy"] = settings_manager.get("youtube_privacy") or DEFAULT_PRIVACY
         if youtube_consent is not None:
             status["consent"] = youtube_consent.status()
         self.send_json_response(status)
@@ -491,11 +498,14 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 "fell over. The backend log has the reason. Run it again.",
             )
 
-        # Check dependencies for locked steps
+        # Check dependencies for locked steps. A dependency that finished some
+        # of its clips and not the rest counts as met: there is real output to
+        # work from, and locking the step behind it would leave the user with
+        # nothing to do about a run that mostly worked.
         for step_name, config in pipeline_config['steps'].items():
             if step_name not in statuses or statuses[step_name] == "todo":
                 dependencies = config.get('depends_on', [])
-                all_deps_met = all(statuses.get(dep) == "completed" for dep in dependencies)
+                all_deps_met = all(statuses.get(dep) in DONE_STATUSES for dep in dependencies)
                 statuses[step_name] = "locked" if not all_deps_met else "todo"
 
         self.send_json_response(statuses)
@@ -1152,6 +1162,15 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 project.settings.postiz = PostizSettings.from_dict({
                     **project.settings.postiz.to_dict(),
                     **(data['postiz'] or {}),
+                })
+            if 'upload' in data:
+                # Merged like the Postiz block, and for the same reason: the
+                # panel saves one field at a time, and an explicit null is how
+                # "follow the application settings" is stored — so a key set
+                # back to null has to survive the merge rather than be dropped.
+                project.settings.upload = UploadSettings.from_dict({
+                    **project.settings.upload.to_dict(),
+                    **(data['upload'] or {}),
                 })
             if 'captions' in data:
                 # Merged rather than replaced: the styler sends one changed

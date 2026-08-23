@@ -35,10 +35,34 @@ class Clipper:
         project.set_property("highlights", project.highlights)
         project.set_step_status("clipper", "pending")
 
-    def start_service(self, project: Project) -> None:
-        """Initializes the service and resets metadata."""
-        self.reset_metadata(project)
+    def start_service(self, project: Project, full: bool = True) -> None:
+        """Initializes the service and resets metadata.
+
+        `full` throws away everything the last run produced. A resume does not:
+        the clips already on disk are the whole point of resuming, and wiping
+        the directory to re-cut two missing files out of twenty is the bug this
+        parameter exists to avoid.
+        """
+        if full:
+            self.reset_metadata(project)
         project.set_step_status("clipper", "running")
+
+    def has_clip(self, project: Project, highlight: Highlight) -> bool:
+        """Whether this highlight's cut is on disk right now.
+
+        Both halves are needed. The metadata alone lies after a clips directory
+        is deleted from under the project, and the file alone says nothing about
+        which highlight it belongs to.
+        """
+        if not highlight.is_clip_generated or not highlight.generated_clip_filename:
+            return False
+        path = (
+            Path(project.base_directory)
+            / project.project_id
+            / project.clip_base_directory
+            / highlight.generated_clip_filename
+        )
+        return path.exists()
 
     def _write_captions(self, project: Project, highlight, clips_dir: str, clip_filename: str,
                         width: int, height: int) -> Optional[str]:
@@ -106,10 +130,18 @@ class Clipper:
         project.set_property("highlights", project.highlights)
         return filename
 
-    async def execute(self, project: Project) -> List[Dict[str, Any]]:  # pragma: no cover
-        """Executes clipping logic."""
+    async def execute(self, project: Project, full: bool = False) -> List[Dict[str, Any]]:  # pragma: no cover
+        """Executes clipping logic.
+
+        `full` cuts every highlight from scratch, throwing the clips directory
+        away first — what "run the whole pipeline" means. Left off, the run is a
+        resume: highlights whose file is already on disk are left alone and only
+        the ones still missing are cut. That is what makes pressing the step
+        again after two clips failed finish the job in a minute rather than
+        re-encoding the eighteen that were already fine.
+        """
         logger.info(f"Clipper executing for project={project.project_id}, highlight_count={len(project.highlights)}")
-        self.start_service(project)
+        self.start_service(project, full=full)
         try:
             engine = OpenCVVideoEngine("root/yolov8n.pt")
             input_path = str(project.get_artifact_path("original_file"))
@@ -129,18 +161,75 @@ class Clipper:
                 )
 
             total = len(project.highlights)
-            for i, short in enumerate(project.highlights):
+            skipped = 0
+            failures: List[str] = []
+            # Indexes, not the highlights themselves: each render is written
+            # back onto its highlight, which reloads the list from disk.
+            for i in range(total):
+                short = project.highlights[i]
+                if not full and self.has_clip(project, short):
+                    skipped += 1
+                    continue
                 report(f"Cutting clip {i + 1} of {total}")
-                self._render_highlight(project, engine, input_path, clips_dir, i, short, dimensions)
+                try:
+                    self._render_highlight(project, engine, input_path, clips_dir, i, short, dimensions)
+                except Exception as e:
+                    # One highlight that will not cut must not abandon the ones
+                    # after it. The clips that do come out are worth having, and
+                    # the step reports itself as partly done rather than failing
+                    # whole — which is also what lets the next press pick up
+                    # exactly the ones still missing.
+                    message = str(e) or e.__class__.__name__
+                    logger.warning(f"Skipping clip {i} for {project.project_id}: {message}")
+                    failures.append(message)
+                    continue
                 self._announce_clip(project, i)
 
-            logger.info(f"Clipper completed for project={project.project_id}")
-            self.end_service(project)
+            if skipped:
+                report(f"{skipped} clip(s) were already cut and were left alone")
+            self._settle(project, failures)
+            logger.info(
+                f"Clipper finished for project={project.project_id}: "
+                f"{total - skipped - len(failures)} cut, {skipped} already on disk, "
+                f"{len(failures)} failed"
+            )
             return [h.to_dict() for h in project.highlights]
         except Exception as e:
+            # Everything outside the per-clip loop: no source video, no engine,
+            # nothing that cutting one more highlight would have fixed.
             logger.error(f"Error executing clipper: {e}")
-            project.set_step_status("clipper", "error")
+            project.fail_step("clipper", str(e) or e.__class__.__name__)
             return []
+
+    def _settle(self, project: Project, failures: List[str]) -> None:
+        """Records how much of the project actually has a clip.
+
+        Judged on the files rather than on this run's tally: a resume that cut
+        nothing because everything was already there is a completed step, and a
+        run that cut nine of ten is not, however well the nine went.
+        """
+        missing = [
+            index
+            for index, highlight in enumerate(project.highlights)
+            if not self.has_clip(project, highlight)
+        ]
+        if not missing:
+            self.end_service(project)
+            return
+        if len(missing) == len(project.highlights):
+            project.fail_step(
+                "clipper",
+                f"No clip could be cut. The first failure was: {failures[0]}"
+                if failures
+                else "No clip was cut.",
+            )
+            return
+        reason = f" The first failure was: {failures[0]}" if failures else ""
+        project.partial_step(
+            "clipper",
+            f"{len(missing)} of {len(project.highlights)} clips have no file yet."
+            f"{reason} Run this step again to cut only those.",
+        )
 
     def _announce_clip(self, project: Project, index: int) -> None:
         """Hands a finished clip to whoever asked to hear about it.
@@ -186,7 +275,7 @@ class Clipper:
         # re-cut only completes the step if it was the last one missing. A
         # failed render leaves the status alone rather than claiming an error
         # for clips that are still perfectly good.
-        if all(h.is_clip_generated for h in project.highlights):
+        if all(self.has_clip(project, h) for h in project.highlights):
             project.set_step_status("clipper", "completed")
         return highlight.to_dict()
 

@@ -504,6 +504,8 @@ export const ClipDetail: React.FC = () => {
             isRendered={isRendered}
             youtubeUrl={highlight.youtube_url}
             youtubeVideoId={highlight.youtube_video_id}
+            youtubePrivacy={highlight.youtube_privacy}
+            youtubePublishAt={highlight.youtube_publish_at}
             uploadedAt={highlight.uploaded_at}
             renderedAt={highlight.rendered_at}
             postizUrl={highlight.postiz_url}

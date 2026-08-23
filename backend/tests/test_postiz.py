@@ -585,8 +585,8 @@ def test_the_import_job_leaves_the_post_on_the_highlight(project_root):
 
 # --- The pipeline step ------------------------------------------------------
 
-def run_step(service, project_id=PROJECT_ID):
-    return asyncio.run(service.execute(Project(project_id)))
+def run_step(service, project_id=PROJECT_ID, full=False):
+    return asyncio.run(service.execute(Project(project_id), full=full))
 
 
 def unconfigured(exc):
@@ -675,7 +675,11 @@ def test_one_clip_failing_does_not_abandon_the_rest(project_root):
     assert len(run_step(service)) == 1
 
     metadata = read_metadata()
-    assert metadata["step_statuses"]["postiz"] == "completed"
+    # Partly done, not done: one of the two clips has no draft, and a step that
+    # called that "completed" is how someone goes looking for a draft that was
+    # never made.
+    assert metadata["step_statuses"]["postiz"] == "partial"
+    assert "1 of 2 clips are not in Postiz yet" in metadata["step_errors"]["postiz"]
     assert metadata["highlights"][0]["postiz_error"] == "the first one broke"
     assert metadata["highlights"][1]["postiz_post_id"] == "post-1"
 
@@ -842,6 +846,46 @@ def test_a_clip_nobody_has_filed_is_filed_by_the_step(project_root):
     project_dir = write_project(project_root, [highlight(rendered_at="2026-01-01T10:00:00")])
 
     assert len(run_step(publisher(project_dir, FakePostiz()))) == 1
+
+
+def test_a_second_press_files_only_the_clips_that_are_missing(project_root):
+    # The complaint this covers: one draft in Postiz, nineteen clips with none,
+    # and a step that said "done". Pressing it again has to file the nineteen
+    # and leave the one alone.
+    project_dir = write_project(project_root, [
+        highlight(
+            rendered_at="2026-01-01T10:00:00",
+            postiz_imported_at="2026-01-01T10:00:05",
+            postiz_post_id="post-1",
+        ),
+        highlight(rendered_at="2026-01-01T10:00:00"),
+    ])
+    client = FakePostiz()
+
+    assert len(run_step(publisher(project_dir, client))) == 1
+
+    # One request, for the clip that had no draft.
+    assert len(client.posts) == 1
+    metadata = read_metadata()
+    assert metadata["step_statuses"]["postiz"] == "completed"
+    # And the draft that was already there kept its id rather than gaining a twin.
+    assert metadata["highlights"][0]["postiz_post_id"] == "post-1"
+
+
+def test_a_resume_that_finds_nothing_left_still_reads_as_done(project_root):
+    # A run that files nothing is "everything is already there" as often as it
+    # is "nothing worked", and the two are told apart by the highlights rather
+    # than by the tally — which is why `_settle` reads the clips, not the run.
+    project_dir = write_project(project_root, [highlight(rendered_at="2026-01-01T10:00:00")])
+    client = FakePostiz()
+    service = publisher(project_dir, client)
+
+    assert len(run_step(service)) == 1
+    assert read_metadata()["highlights"][0]["postiz_post_id"] == "post-1"
+
+    assert run_step(service) == []
+    assert len(client.posts) == 1
+    assert read_metadata()["step_statuses"]["postiz"] == "completed"
 
 
 # --- What each channel travels with -----------------------------------------

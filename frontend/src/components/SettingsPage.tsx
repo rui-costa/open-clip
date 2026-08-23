@@ -1,8 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSettings, updateSettings, getResolutionMap, getAspectRatioMap, getCaptionStyles, getDescriptionFields, getYoutubeStatus, connectYoutube, cancelYoutubeConnect, getPostizStatus, type SettingsResponse } from '../api';
+import { getSettings, updateSettings, getResolutionMap, getAspectRatioMap, getCaptionStyles, getDescriptionFields, getYoutubeStatus, connectYoutube, cancelYoutubeConnect, getPostizStatus, type SettingsResponse, type UploadPrivacy } from '../api';
 import { useDebounce } from '../hooks/useDebounce';
 import { DescriptionFieldHelp } from './DescriptionFieldHelp';
+import { DateField } from './DateField';
+import {
+  HOURS,
+  MAX_SCHEDULE_YEARS_AHEAD,
+  PER_DAY_CHOICES,
+  PRIVACY_LABELS,
+  earliestScheduleDate,
+  hourLabel,
+  latestScheduleDate,
+} from '../utils/uploadSchedule';
 
 /** Fields that mean something in a Postiz post and nothing in a description. */
 const POSTIZ_FIELDS = [
@@ -455,6 +465,109 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
             </span>
           )}
         </div>
+
+        {/* What an upload makes. Publishing is the one thing this app does that
+            it cannot undo, so the choice is here rather than on the button that
+            does it — and a project may still disagree with it. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+          <label htmlFor="youtube-privacy" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>What an upload makes:</label>
+          <select
+            id="youtube-privacy"
+            value={settings.youtube_privacy || 'private'}
+            onChange={(e) => saveSettings({ settings: { youtube_privacy: e.target.value as UploadPrivacy } })}
+            style={inputStyle}
+          >
+            {(Object.keys(PRIVACY_LABELS) as UploadPrivacy[]).map((value) => (
+              <option key={value} value={value}>{PRIVACY_LABELS[value]}</option>
+            ))}
+          </select>
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            {/* Said plainly because it is not obvious that the fourth choice is
+                the first one wearing a hat. */}
+            A scheduled clip goes up private with a publish time on it; YouTube turns it public
+            itself when the time comes.
+          </span>
+        </div>
+
+        {/* Only under a schedule: these say nothing about a clip that is public
+            the moment it lands. They are kept when the privacy changes, so a
+            week on private does not cost the user the calendar they typed. */}
+        {settings.youtube_privacy === 'schedule' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', border: 'var(--border)', padding: 'var(--space-sm)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+              <label htmlFor="youtube-start-date" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>First clip goes public on:</label>
+              <DateField
+                id="youtube-start-date"
+                value={settings.youtube_schedule_start_date || ''}
+                onCommit={(value) =>
+                  saveSettings({ settings: { youtube_schedule_start_date: value } })
+                }
+                min={earliestScheduleDate()}
+                max={latestScheduleDate()}
+                style={inputStyle}
+              />
+              <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+                Empty publishes as soon as the upload is done. Today at the earliest — YouTube
+                refuses a publish time behind it — and at most {MAX_SCHEDULE_YEARS_AHEAD} years out.
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+              <label htmlFor="youtube-per-day" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>How many go public per day:</label>
+              <select
+                id="youtube-per-day"
+                value={String(settings.youtube_schedule_per_day ?? 0)}
+                onChange={(e) =>
+                  saveSettings({ settings: { youtube_schedule_per_day: Number(e.target.value) } })
+                }
+                style={inputStyle}
+              >
+                {PER_DAY_CHOICES.map((choice) => (
+                  <option key={choice.value} value={choice.value}>{choice.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+              <span style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Spread between:</span>
+              <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
+                <label htmlFor="youtube-day-start" style={{ fontSize: '0.8rem' }}>From</label>
+                <select
+                  id="youtube-day-start"
+                  value={String(settings.youtube_schedule_day_start_hour ?? 9)}
+                  onChange={(e) =>
+                    saveSettings({ settings: { youtube_schedule_day_start_hour: Number(e.target.value) } })
+                  }
+                  style={{ ...inputStyle, width: 'auto' }}
+                >
+                  {HOURS.map((hour) => (
+                    <option key={hour} value={hour}>{hourLabel(hour)}</option>
+                  ))}
+                </select>
+                <label htmlFor="youtube-day-end" style={{ fontSize: '0.8rem' }}>to</label>
+                <select
+                  id="youtube-day-end"
+                  value={String(settings.youtube_schedule_day_end_hour ?? 21)}
+                  onChange={(e) =>
+                    saveSettings({ settings: { youtube_schedule_day_end_hour: Number(e.target.value) } })
+                  }
+                  style={{ ...inputStyle, width: 'auto' }}
+                >
+                  {HOURS.map((hour) => (
+                    <option key={hour} value={hour}>{hourLabel(hour)}</option>
+                  ))}
+                </select>
+              </div>
+              <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+                {/* Which clock these are on is the one thing that cannot be
+                    guessed from the numbers, and getting it wrong publishes a
+                    short in the middle of somebody's night. */}
+                On this machine's clock. One clip a day goes out at the first hour; the rest of a
+                day's clips are spaced evenly up to the last.
+              </span>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Postiz: everywhere that is not YouTube. Clips are handed to the

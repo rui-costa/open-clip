@@ -117,10 +117,30 @@ class YoutubeClient:
             return None
         return bool(response.get("items"))
 
-    def upload_video(self, file_path: str, title: str, description: str) -> Dict[str, Any]:
+    def upload_video(
+        self,
+        file_path: str,
+        title: str,
+        description: str,
+        privacy_status: str = "private",
+        publish_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Publishes one file, at the privacy the caller asked for.
+
+        `publish_at` is an RFC 3339 timestamp and makes the upload a scheduled
+        one: YouTube holds the video private until then and turns it public
+        itself. It is only honoured alongside `privacyStatus: private` — a
+        video that is already public has nothing left to publish — so the
+        privacy is forced back to private rather than sent as a pair YouTube
+        would take and silently ignore.
+        """
+        status: Dict[str, Any] = {"privacyStatus": privacy_status}
+        if publish_at:
+            status["privacyStatus"] = "private"
+            status["publishAt"] = publish_at
         body = {
             "snippet": {"title": title, "description": description},
-            "status": {"privacyStatus": "private"},
+            "status": status,
         }
         request = self.service.videos().insert(
             part="snippet,status",

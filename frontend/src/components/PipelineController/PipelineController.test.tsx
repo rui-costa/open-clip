@@ -135,6 +135,66 @@ describe('PipelineController', () => {
     // `chapters` errored, so the aggregate must not read as completed.
     expect(screen.getByRole('button', { name: /AI Steps/i }).style.background).toBe('var(--error)');
   });
+
+  // A step that filed one draft out of twenty used to paint itself green and
+  // say "done", which is how someone goes looking for nineteen drafts that were
+  // never made.
+  describe('a step that only half worked', () => {
+    const partial: PipelineStep[] = [
+      { name: 'postiz', label: 'Postiz', status: 'partial' },
+      { name: 'clipper', label: 'Clipper', status: 'completed' },
+    ];
+
+    it('says it is partly done, and that pressing it finishes the job', () => {
+      render(<PipelineController onExecute={vi.fn()} steps={partial} />);
+
+      expect(screen.getByRole('button', { name: /Postiz/i }).textContent).toContain(
+        'partly done — press to finish'
+      );
+    });
+
+    it('is painted as neither done nor failed', () => {
+      render(<PipelineController onExecute={vi.fn()} steps={partial} />);
+
+      const button = screen.getByRole('button', { name: /Postiz/i });
+      expect(button.style.background).toBe('var(--warning)');
+      expect(button.className).not.toContain('pipeline-step-success');
+    });
+
+    it('runs the step rather than stopping it when pressed', () => {
+      const onExecute = vi.fn();
+      render(<PipelineController onExecute={onExecute} steps={partial} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /Postiz/i }));
+
+      expect(onExecute).toHaveBeenCalledWith('START', 'postiz');
+    });
+
+    it('does not let the pipeline celebrate finishing', () => {
+      const { rerender } = render(
+        <PipelineController onExecute={vi.fn()} steps={[{ ...partial[0], status: 'todo' }]} />
+      );
+      rerender(<PipelineController onExecute={vi.fn()} steps={[partial[0]]} />);
+
+      expect(document.querySelector('.sweep-clip')).toBeNull();
+    });
+
+    it('carries to the collapsed AI button, where a done badge would hide it', () => {
+      render(
+        <PipelineController
+          onExecute={vi.fn()}
+          steps={[
+            { name: 'highlights', label: 'Highlights', status: 'completed', isLlm: true },
+            { name: 'chapters', label: 'Chapters', status: 'partial', isLlm: true },
+          ]}
+        />
+      );
+
+      expect(screen.getByRole('button', { name: /AI Steps/i }).style.background).toBe(
+        'var(--warning)'
+      );
+    });
+  });
 });
 
 // "Running" is the same word for a step three seconds in and a step six
@@ -233,5 +293,30 @@ describe('PipelineActivity', () => {
     render(<PipelineActivity steps={failed} />);
 
     expect(screen.getByText(/Postiz answered 500/)).toBeDefined();
+  });
+
+  // The amber badge says "some of it did not happen". This is the only place
+  // that says which part, and it has to survive the run that produced it.
+  it('says which part of a partly done step is still missing', () => {
+    const partial: PipelineStep[] = [
+      {
+        name: 'postiz',
+        label: 'Postiz Drafts',
+        status: 'partial',
+        error: '3 of 4 clips are not in Postiz yet. Run this step again to import only those.',
+      },
+    ];
+
+    render(<PipelineActivity steps={partial} activity={{}} now={5} />);
+
+    expect(screen.getByText(/Postiz Drafts partly done/)).toBeDefined();
+    expect(screen.getByText(/3 of 4 clips are not in Postiz yet/)).toBeDefined();
+  });
+
+  it('says nothing about a partly done step that gave no reason', () => {
+    const partial: PipelineStep[] = [{ name: 'clipper', label: 'Clipper', status: 'partial' }];
+    const { container } = render(<PipelineActivity steps={partial} activity={{}} now={5} />);
+
+    expect(container.firstChild).toBeNull();
   });
 });

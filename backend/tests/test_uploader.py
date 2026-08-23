@@ -3,7 +3,7 @@
 import json
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -86,8 +86,14 @@ class FakeYoutube:
         self.release = threading.Event()
         self.block = False
 
-    def upload_video(self, file_path, title, description):
-        self.calls.append({"file_path": file_path, "title": title, "description": description})
+    def upload_video(self, file_path, title, description, privacy_status="private", publish_at=None):
+        self.calls.append({
+            "file_path": file_path,
+            "title": title,
+            "description": description,
+            "privacy_status": privacy_status,
+            "publish_at": publish_at,
+        })
         if self.block:
             self.started.set()
             self.release.wait(timeout=5)
@@ -131,7 +137,7 @@ def highlight(**overrides):
     return data
 
 
-def write_project(root: Path, highlights, description=None):
+def write_project(root: Path, highlights, description=None, upload=None):
     project_dir = root / "projects" / PROJECT_ID
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "metadata.json").write_text(json.dumps({
@@ -145,6 +151,7 @@ def write_project(root: Path, highlights, description=None):
             "aspect_ratio": "9:16",
             "resolution": "1080p",
             "description": description or {},
+            "upload": upload or {},
         },
         "status": None,
         "step_statuses": {},
@@ -722,3 +729,316 @@ def test_no_highlight_at_that_index_is_refused_before_a_job_is_registered(projec
         orchestrator.upload_clip(PROJECT_ID, 7)
 
     assert orchestrator.active_processes == {}
+
+
+# --- The step across the whole project --------------------------------------
+
+def run_step(service, full=False):
+    import asyncio
+
+    return asyncio.run(service.execute(Project(PROJECT_ID), full=full))
+
+
+def test_a_second_press_publishes_only_the_clips_with_no_video(project_root):
+    # A clip already on YouTube cannot be republished, only duplicated, and
+    # nothing in this app can take either copy down.
+    project_dir = write_project(project_root, [
+        highlight(youtube_video_id="vid-old", youtube_url="https://youtu.be/vid-old"),
+        highlight(),
+    ])
+    client = FakeYoutube()
+    service = uploader(project_dir, client_factory=lambda: client)
+
+    assert len(run_step(service)) == 1
+
+    assert len(client.calls) == 1
+    metadata = read_metadata()
+    assert metadata["step_statuses"]["upload"] == "completed"
+    assert metadata["highlights"][0]["youtube_video_id"] == "vid-old"
+
+
+def test_a_full_run_publishes_every_clip(project_root):
+    # What the whole-pipeline run asks for: start from nothing.
+    project_dir = write_project(project_root, [
+        highlight(youtube_video_id="vid-old", youtube_url="https://youtu.be/vid-old"),
+        highlight(),
+    ])
+    client = FakeYoutube()
+
+    assert len(run_step(uploader(project_dir, client_factory=lambda: client), full=True)) == 2
+    assert len(client.calls) == 2
+
+
+def test_a_run_that_publishes_some_of_the_clips_is_partial(project_root):
+    project_dir = write_project(project_root, [highlight(), highlight()])
+    client = FakeYoutube()
+    service = uploader(project_dir, client_factory=lambda: client)
+    original = service.upload_one
+
+    def flaky(project, index, **kwargs):
+        if index == 0:
+            raise RuntimeError("ffmpeg fell over")
+        return original(project, index, **kwargs)
+
+    service.upload_one = flaky
+
+    assert len(run_step(service)) == 1
+
+    metadata = read_metadata()
+    assert metadata["step_statuses"]["upload"] == "partial"
+    assert "1 of 2 clips are not on YouTube yet" in metadata["step_errors"]["upload"]
+    assert metadata["highlights"][0]["upload_error"] == "ffmpeg fell over"
+
+
+def test_a_run_that_publishes_nothing_fails_the_step(project_root):
+    project_dir = write_project(project_root, [highlight()])
+    service = uploader(
+        project_dir,
+        client_factory=lambda: FakeYoutube(),
+        clipper=FakeClipper(project_dir, error=RuntimeError("ffmpeg fell over")),
+    )
+
+    assert run_step(service) == []
+
+    metadata = read_metadata()
+    assert metadata["step_statuses"]["upload"] == "error"
+    assert "ffmpeg fell over" in metadata["step_errors"]["upload"]
+
+
+# --- What an upload makes: privacy, and the schedule that publishes it -------
+
+# A fixed "now" in a timezone that is not UTC, so a test that gets the offset
+# wrong cannot pass by accident: 2 p.m. on a Saturday, two hours ahead.
+TZ = timezone(timedelta(hours=2))
+NOW = datetime(2026, 8, 22, 14, 0, tzinfo=TZ)
+
+
+def scheduling_uploader(project_dir: Path, app_settings=None, **overrides) -> Uploader:
+    """An uploader whose settings and clock are the test's, not the machine's."""
+    settings = app_settings or {}
+    return uploader(
+        project_dir,
+        settings_reader=lambda key, default=None: settings.get(key, default),
+        now=lambda: NOW,
+        **overrides,
+    )
+
+
+def publish(project_dir: Path, app_settings=None, index=0, client=None) -> dict:
+    """Publishes one clip and hands back what the API was asked to do."""
+    client = client or FakeYoutube()
+    scheduling_uploader(project_dir, app_settings).upload_one(
+        Project(PROJECT_ID), index, client=client
+    )
+    return client.calls[-1]
+
+
+def test_an_upload_nobody_has_configured_is_private(project_root):
+    # What every upload did before there was a choice, and the only one of the
+    # four that cannot reach an audience by accident.
+    project_dir = write_project(project_root, [highlight()])
+
+    call = publish(project_dir)
+
+    assert call["privacy_status"] == "private"
+    assert call["publish_at"] is None
+
+
+def test_the_privacy_from_settings_is_what_the_video_goes_up_as(project_root):
+    project_dir = write_project(project_root, [highlight()])
+
+    assert publish(project_dir, {"youtube_privacy": "unlisted"})["privacy_status"] == "unlisted"
+    assert publish(project_dir, {"youtube_privacy": "public"})["privacy_status"] == "public"
+
+
+def test_a_privacy_youtube_has_never_heard_of_is_refused_rather_than_sent(project_root):
+    # The value reaches this from settings.json, which a user can edit by hand.
+    project_dir = write_project(project_root, [highlight()])
+
+    assert publish(project_dir, {"youtube_privacy": "friends only"})["privacy_status"] == "private"
+
+
+def test_a_project_publishes_at_its_own_privacy_rather_than_the_applications(project_root):
+    # One install cuts a company's podcast and somebody's side project, and the
+    # two do not go public on the same terms.
+    project_dir = write_project(project_root, [highlight()], upload={"privacy": "public"})
+
+    assert publish(project_dir, {"youtube_privacy": "private"})["privacy_status"] == "public"
+
+
+def test_a_project_that_has_chosen_nothing_follows_the_application(project_root):
+    project_dir = write_project(project_root, [highlight()], upload={"privacy": None})
+
+    assert publish(project_dir, {"youtube_privacy": "unlisted"})["privacy_status"] == "unlisted"
+
+
+def test_a_scheduled_upload_goes_up_private_with_a_time_on_it(project_root):
+    # "Scheduled" is not a fourth privacy — YouTube has no such state. It is
+    # private plus a publish time, which YouTube itself turns public.
+    project_dir = write_project(project_root, [highlight()])
+
+    call = publish(project_dir, {"youtube_privacy": "schedule"})
+
+    assert call["privacy_status"] == "private"
+    # No day named, nothing per day: as soon as the upload can be published,
+    # which is the lead ahead of now — 14:00+02:00, so 12:15 UTC.
+    assert call["publish_at"] == "2026-08-22T12:15:00Z"
+
+
+def test_a_named_day_publishes_at_the_first_hour_of_the_window(project_root):
+    project_dir = write_project(project_root, [highlight()])
+
+    call = publish(project_dir, {
+        "youtube_privacy": "schedule",
+        "youtube_schedule_start_date": "2026-08-25",
+        "youtube_schedule_day_start_hour": 9,
+    })
+
+    # 09:00 on the 25th, on the user's clock, which is 07:00 UTC.
+    assert call["publish_at"] == "2026-08-25T07:00:00Z"
+
+
+def test_clips_are_spread_over_the_days_they_were_given(project_root):
+    project_dir = write_project(project_root, [highlight(), highlight(), highlight()])
+    settings = {
+        "youtube_privacy": "schedule",
+        "youtube_schedule_start_date": "2026-08-25",
+        "youtube_schedule_per_day": 2,
+        "youtube_schedule_day_start_hour": 9,
+        "youtube_schedule_day_end_hour": 21,
+    }
+    service = scheduling_uploader(project_dir, settings)
+
+    assert [service.publish_at(Project(PROJECT_ID), i) for i in range(3)] == [
+        "2026-08-25T07:00:00Z",  # 09:00 local
+        "2026-08-25T19:00:00Z",  # 21:00 local
+        "2026-08-26T07:00:00Z",  # the next day, back at the first hour
+    ]
+
+
+def test_a_clip_keeps_its_slot_however_it_was_published(project_root):
+    # The slot is a function of the clip's own position, so publishing one card
+    # on its own puts it exactly where the whole-project run would have.
+    project_dir = write_project(project_root, [highlight(), highlight()])
+    settings = {
+        "youtube_privacy": "schedule",
+        "youtube_schedule_start_date": "2026-08-25",
+        "youtube_schedule_per_day": 1,
+    }
+
+    assert publish(project_dir, settings, index=1)["publish_at"] == (
+        scheduling_uploader(project_dir, settings).publish_at(Project(PROJECT_ID), 1)
+    )
+
+
+def test_a_day_that_has_already_begun_starts_the_run_tomorrow(project_root):
+    # Nine has passed by two in the afternoon. Deciding this per clip put the
+    # ones whose slot had gone onto the day the next clip already had.
+    project_dir = write_project(project_root, [highlight(), highlight()])
+    service = scheduling_uploader(project_dir, {
+        "youtube_privacy": "schedule",
+        "youtube_schedule_start_date": "2026-08-22",
+        "youtube_schedule_per_day": 1,
+        "youtube_schedule_day_start_hour": 9,
+    })
+
+    assert [service.publish_at(Project(PROJECT_ID), i) for i in range(2)] == [
+        "2026-08-23T07:00:00Z",
+        "2026-08-24T07:00:00Z",
+    ]
+
+
+def test_a_day_that_has_gone_is_never_published_in_the_past(project_root):
+    # YouTube refuses a publish time behind it, and a date chosen last week is
+    # one. The lead ahead of now is the earliest anything can be.
+    project_dir = write_project(project_root, [highlight()])
+
+    call = publish(project_dir, {
+        "youtube_privacy": "schedule",
+        "youtube_schedule_start_date": "2020-01-01",
+    })
+
+    assert call["publish_at"] == "2026-08-22T12:15:00Z"
+
+
+def test_a_date_nobody_can_parse_publishes_as_soon_as_it_can(project_root):
+    project_dir = write_project(project_root, [highlight()])
+
+    call = publish(project_dir, {
+        "youtube_privacy": "schedule",
+        "youtube_schedule_start_date": "next tuesday",
+    })
+
+    assert call["publish_at"] == "2026-08-22T12:15:00Z"
+
+
+def test_a_project_may_keep_its_own_calendar(project_root):
+    project_dir = write_project(project_root, [highlight()], upload={
+        "privacy": "schedule",
+        "start_date": "2026-09-01",
+        "day_start_hour": 8,
+    })
+    service = scheduling_uploader(project_dir, {
+        "youtube_privacy": "private",
+        "youtube_schedule_start_date": "2026-08-25",
+        "youtube_schedule_day_start_hour": 17,
+    })
+
+    assert service.publish_at(Project(PROJECT_ID), 0) == "2026-09-01T06:00:00Z"
+
+
+def test_nothing_is_scheduled_unless_the_project_is_on_a_schedule(project_root):
+    # The calendar is kept while the privacy is not "schedule", so a week on
+    # private does not cost the user their dates — but it publishes nothing.
+    project_dir = write_project(project_root, [highlight()], upload={
+        "privacy": "unlisted",
+        "start_date": "2026-09-01",
+    })
+
+    assert publish(project_dir)["publish_at"] is None
+
+
+def test_what_the_video_went_up_as_is_recorded_on_the_clip(project_root):
+    # A scheduled short and a private one are the same page on YouTube until
+    # the hour comes; this is the only thing that says which one it is.
+    project_dir = write_project(project_root, [highlight()])
+
+    publish(project_dir, {
+        "youtube_privacy": "schedule",
+        "youtube_schedule_start_date": "2026-08-25",
+    })
+
+    stored = read_metadata()["highlights"][0]
+    assert stored["youtube_privacy"] == "schedule"
+    assert stored["youtube_publish_at"] == "2026-08-25T07:00:00Z"
+
+
+def test_a_project_written_by_hand_cannot_publish_something_youtube_refuses(project_root):
+    # metadata.json is a file on the user's disk. A privacy YouTube has never
+    # heard of, and an hour that is not one, read as no opinion at all.
+    project_dir = write_project(project_root, [highlight()], upload={
+        "privacy": "friends only",
+        "day_start_hour": 39,
+        "start_date": "the first of never",
+    })
+    service = scheduling_uploader(project_dir, {
+        "youtube_privacy": "schedule",
+        "youtube_schedule_day_start_hour": 9,
+    })
+
+    assert service.privacy(Project(PROJECT_ID)) == "schedule"
+    assert service.publish_at(Project(PROJECT_ID), 0) == "2026-08-22T12:15:00Z"
+
+
+def test_a_video_that_is_gone_takes_its_schedule_with_it(project_root):
+    project_dir = write_project(project_root, [highlight()])
+    client = FakeYoutube()
+    service = scheduling_uploader(project_dir, {"youtube_privacy": "public"})
+    service.upload_one(Project(PROJECT_ID), 0, client=client)
+
+    client.exists = False
+    service.verify_publication(Project(PROJECT_ID), 0, client=client)
+
+    stored = read_metadata()["highlights"][0]
+    assert stored["youtube_privacy"] is None
+    assert stored["youtube_publish_at"] is None

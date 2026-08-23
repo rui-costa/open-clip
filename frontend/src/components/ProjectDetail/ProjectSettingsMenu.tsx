@@ -4,6 +4,7 @@ import { CaptionStyler } from '../ClipManagement/CaptionStyler';
 import { OverlayStyler } from '../ClipManagement/OverlayStyler';
 import { DescriptionPanel } from './DescriptionPanel';
 import { PostizPanel } from './PostizPanel';
+import { UploadPanel } from './UploadPanel';
 import {
   getAspectRatioMap,
   getResolutionMap,
@@ -193,6 +194,13 @@ export const ProjectSettingsMenu: React.FC<ProjectSettingsMenuProps> = ({ metada
             variant="inline"
             projectId={metadata.project_id}
             settings={metadata.settings?.postiz}
+          />
+          {/* The other half of where the clips go, and the irreversible half:
+              what these uploads are on YouTube, and when they go public. */}
+          <UploadPanel
+            variant="inline"
+            projectId={metadata.project_id}
+            settings={metadata.settings?.upload}
           />
         </div>
       </div>

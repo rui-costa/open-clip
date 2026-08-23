@@ -17,6 +17,12 @@ from backend.src.services.uploader import Uploader, UploadInProgressError
 
 logger = logging.getLogger(__name__)
 
+# Statuses that mean a step has nothing left for the pipeline to trigger. A
+# step that did some of its clips and not the rest is one of them: the run that
+# would finish it is a resume the user asks for by pressing the step, not
+# something to loop on here.
+DONE_STATUSES = ("completed", "partial")
+
 
 class ClipRegenerationInProgressError(Exception):
     """A clip was asked to re-cut while its previous re-cut is still running."""
@@ -99,17 +105,28 @@ class PipelineOrchestrator:
             logger.info(f"Registered LLM task '{name}' from {task.template} as a pipeline step")
         return config
 
-    def _exec_service(self, project: Project, step_name: str):
-        """Helper to run service execution synchronously within a thread."""
+    def _exec_service(self, project: Project, step_name: str, full: bool = False):
+        """Helper to run service execution synchronously within a thread.
+
+        `full` is offered to the services that know what it means — the ones
+        that do a piece of work per clip and can therefore resume — and left off
+        the call for every other service, so a step whose `execute` takes only a
+        project is not broken by a keyword it never asked for.
+        """
         service = self.services.get(step_name)
         if service:
             import asyncio
             import inspect
+            kwargs = (
+                {"full": full}
+                if "full" in inspect.signature(service.execute).parameters
+                else {}
+            )
             if inspect.iscoroutinefunction(service.execute):
-                asyncio.run(service.execute(project))
+                asyncio.run(service.execute(project, **kwargs))
             else:
-                service.execute(project)
-            
+                service.execute(project, **kwargs)
+
             if project.step_statuses.get(step_name) == "error":
                 raise RuntimeError(f"Service {step_name} failed.")
 
@@ -214,8 +231,15 @@ class PipelineOrchestrator:
             project.set_step_status(name, "todo")
             logger.info(f"Reset step '{name}' for {project.project_id}: '{step_name}' is re-running")
 
-    def run_step(self, project_id: str, step_name: str):
-        """Triggers a step in the background."""
+    def run_step(self, project_id: str, step_name: str, full: bool = False):
+        """Triggers a step in the background.
+
+        A step pressed on its own resumes: it does the work still missing and
+        leaves alone whatever the last run already produced, which is what makes
+        a second press after a partial run finish the job rather than repeat it.
+        `full` is what the whole-pipeline run passes, and it starts from
+        nothing.
+        """
         key = f"{project_id}_{step_name}"
         if key in self.active_processes:
             logger.info(f"Step {step_name} already running for {project_id}, ignoring trigger.")
@@ -235,7 +259,7 @@ class PipelineOrchestrator:
                 # step's own entry, which is what /execution_status hands to
                 # the page while the step runs.
                 with reporting_to(lambda message: self._note_progress(key, message)):
-                    self._exec_service(project, step_name)
+                    self._exec_service(project, step_name, full=full)
             except Exception:
                 logger.exception(f"Step {step_name} failed for project {project_id}")
             finally:
@@ -507,8 +531,12 @@ class PipelineOrchestrator:
                 if any(project.step_statuses.get(s) == "error" for s in steps):
                     break
 
-                # Check if pipeline finished
-                if all(project.step_statuses.get(s) == "completed" for s in steps):
+                # Check if pipeline finished. A step that got some of its clips
+                # done and not the rest is as finished as this run is going to
+                # make it — the pipeline has nothing further to trigger for it,
+                # and the badge on the page is what asks the user to press it
+                # again.
+                if all(project.step_statuses.get(s) in DONE_STATUSES for s in steps):
                     break
 
                 triggered = False
@@ -517,12 +545,17 @@ class PipelineOrchestrator:
                     if project.step_statuses.get(step_name) not in [None, "todo", "pending"]:
                         continue
 
-                    # Strict dependency check
+                    # Strict dependency check. "partial" counts: a step whose
+                    # input is nineteen of twenty clips can still do nineteen
+                    # clips' worth of work, and holding it back would leave the
+                    # user with nothing rather than with most of it.
                     dependencies = config.get('depends_on', [])
-                    if all(project.step_statuses.get(dep) == "completed" for dep in dependencies):
+                    if all(project.step_statuses.get(dep) in DONE_STATUSES for dep in dependencies):
                         # Only trigger auto-run
                         if config.get('auto_run', True):
-                            self.run_step(project.project_id, step_name)
+                            # From the start: this is the whole-pipeline run,
+                            # not a resume of one step.
+                            self.run_step(project.project_id, step_name, full=True)
                             triggered = True
 
                 # Nothing left to trigger and nothing still running means the

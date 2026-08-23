@@ -369,6 +369,12 @@ class TestSingleClipRender:
         stored["highlights"].append(second)
         Path("projects", PROJECT_ID, "metadata.json").write_text(json.dumps(stored))
         (root / "projects" / PROJECT_ID / "original.mp4").write_bytes(b"")
+        # The second clip's file, not just its metadata. "Already cut" is now
+        # read off the disk — a highlight naming a file nobody wrote is exactly
+        # the case a resume has to re-cut.
+        clips = root / "projects" / PROJECT_ID / "clips"
+        clips.mkdir(parents=True, exist_ok=True)
+        (clips / "clip_001.mp4").write_bytes(b"")
         return Project(PROJECT_ID)
 
     def test_renders_only_the_clip_it_was_asked_for(self, project_root, monkeypatch):

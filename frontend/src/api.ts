@@ -256,6 +256,12 @@ export type Highlight = {
   youtube_video_id?: string | null;
   youtube_url?: string | null;
   uploaded_at?: string | null;
+  /** What the video is on YouTube, and — for a scheduled one — when YouTube
+   *  turns it public. The only thing that distinguishes a scheduled short from
+   *  a private one: they are the same page until the hour comes. Absent for a
+   *  clip published before an upload could be anything but private. */
+  youtube_privacy?: UploadPrivacy | null;
+  youtube_publish_at?: string | null;
   /** Why the last publish attempt produced no video, or absent when it did.
    *  The upload runs in the background, so this is where its outcome is read
    *  from rather than from the response to the click that started it. */
@@ -330,6 +336,36 @@ export type PostizProjectSettings = {
 };
 
 /**
+ * What an upload makes on YouTube.
+ *
+ * `schedule` is not a fourth privacy — YouTube has no such state. It is
+ * private plus a publish time, which YouTube itself turns public when the hour
+ * comes. It is offered as a fourth choice because that is how it is thought
+ * about, and the backend takes it apart again.
+ */
+export type UploadPrivacy = 'private' | 'unlisted' | 'public' | 'schedule';
+
+/**
+ * How this project's clips go up on YouTube, when that differs from the app's.
+ *
+ * Every field is null while the project has no opinion, which is what keeps
+ * the default live: change it in Settings and a project that never chose
+ * follows it. The four schedule fields mean nothing unless `privacy` is
+ * `schedule`, and are kept anyway — a week on private should not cost the user
+ * the calendar they typed.
+ */
+export type UploadProjectSettings = {
+  privacy: UploadPrivacy | null;
+  /** How many clips are published per day. 0 is all at the same moment. */
+  per_day: number | null;
+  /** The day the schedule begins, as YYYY-MM-DD. */
+  start_date: string | null;
+  /** The hours the day's clips are spread between, on this machine's clock. */
+  day_start_hour: number | null;
+  day_end_hour: number | null;
+};
+
+/**
  * What an idle clip shows, project-wide.
  *
  * `thumbnail` is the default: a grid of stills is what the shorts will look
@@ -371,6 +407,8 @@ export type ProjectMetadata = {
     clip_preview?: ClipPreview;
     /** Where this project's clips are imported, when it differs from the app's. */
     postiz?: PostizProjectSettings;
+    /** How this project's clips go up on YouTube, when it differs from the app's. */
+    upload?: UploadProjectSettings;
   };
   files?: {
     original_file?: string;
@@ -396,6 +434,17 @@ export type SettingsResponse = {
     description_defaults?: { text?: string; template?: string };
     // Where clips are imported to be posted from, and how. The key is a secret
     // and comes back the way the Gemini key does; the rest is plain settings.
+    // What every upload makes unless a project disagrees. `private` — the
+    // default — is the only one of the four that cannot reach an audience by
+    // accident, and is what an upload did before there was a choice.
+    youtube_privacy?: UploadPrivacy;
+    // The schedule a `schedule` upload publishes on, read on this machine's
+    // clock. Only these three shape it: how many clips a day, the day it
+    // starts, and the hours of that day they are spread between.
+    youtube_schedule_per_day?: number;
+    youtube_schedule_start_date?: string;
+    youtube_schedule_day_start_hour?: number;
+    youtube_schedule_day_end_hour?: number;
     postiz_api_key?: string;
     postiz_api_url?: string;
     // Which channels an import files against. Empty means nothing is imported:
@@ -734,6 +783,9 @@ export type YoutubeStatus = {
   missing_scopes?: string[];
   has_client_secrets: boolean;
   consent?: { pending: boolean; completed: boolean; cancelled: boolean; error: string | null };
+  /** What an upload makes when a project has no opinion, so a project's own
+   *  panel can name the default it is following. */
+  privacy?: UploadPrivacy;
 };
 
 export const getYoutubeStatus = async (): Promise<YoutubeStatus> => {
@@ -911,6 +963,7 @@ export const updateProjectSettings = async (
     description?: Partial<DescriptionSettings>;
     clip_preview?: ClipPreview;
     postiz?: Partial<PostizProjectSettings>;
+    upload?: Partial<UploadProjectSettings>;
   }
 ) => {
   return apiRequest(`/project/${projectId}/settings`, {

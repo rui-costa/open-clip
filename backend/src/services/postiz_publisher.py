@@ -39,6 +39,7 @@ from backend.src.services.description_builder import (
     build_fields,
     render_template,
 )
+from backend.src.services.schedule import day_window, slot_time
 from backend.src.services.uploader import ClipFileMissingError, ClipNotRenderedError
 
 logger = logging.getLogger(__name__)
@@ -247,8 +248,15 @@ class PostizPublisher:
         project.set_property("postiz_posts", [])
         project.set_step_status("postiz", "pending")
 
-    def start_service(self, project: Project) -> None:
-        self.reset_metadata(project)
+    def start_service(self, project: Project, full: bool = True) -> None:
+        """Puts the step into "running", and on a full run forgets the last one.
+
+        A resume must keep `postiz_posts`: the drafts it names are still in
+        Postiz, and the run about to happen only adds the clips missing from
+        them.
+        """
+        if full:
+            self.reset_metadata(project)
         project.set_step_status("postiz", "running")
 
     def end_service(self, project: Project) -> None:
@@ -589,9 +597,10 @@ class PostizPublisher:
                 return fallback
             return min(23, max(0, value))
 
-        first = hour("postiz_day_start_hour", DEFAULT_DAY_START_HOUR)
-        last = hour("postiz_day_end_hour", DEFAULT_DAY_END_HOUR)
-        return (first, last) if last >= first else (first, first)
+        return day_window(
+            hour("postiz_day_start_hour", DEFAULT_DAY_START_HOUR),
+            hour("postiz_day_end_hour", DEFAULT_DAY_END_HOUR),
+        )
 
     def _post_date(self, project: Optional[Project] = None, index: int = 0) -> str:
         """When this clip's post says it is for, as Postiz wants it.
@@ -612,28 +621,13 @@ class PostizPublisher:
             offset = DEFAULT_SCHEDULE_OFFSET_MINUTES
         start = datetime.now(timezone.utc) + timedelta(minutes=max(0, offset))
 
-        per_day = self.per_day(project)
-        if per_day <= 0:
-            # Everything on the same day, at the same moment, which is what
-            # "all in one go" means.
-            return _as_postiz_date(start)
-
-        day, slot = divmod(max(0, index), per_day)
         first_hour, last_hour = self._day_window()
-        if per_day == 1:
-            hour_of_day = float(first_hour)
-        else:
-            hour_of_day = first_hour + (last_hour - first_hour) * (slot / (per_day - 1))
-
-        midnight = start.replace(hour=0, minute=0, second=0, microsecond=0)
-        # Whether the schedule begins today or tomorrow is decided once, for the
-        # whole run, rather than per clip. Deciding it per clip moved only the
-        # clips whose own slot had passed, which landed them on the day the next
-        # clip already had: an afternoon run of three clips at one a day
-        # produced tomorrow, tomorrow, the day after.
-        if midnight + timedelta(hours=first_hour) < start:
-            midnight += timedelta(days=1)
-        return _as_postiz_date(midnight + timedelta(days=day, hours=hour_of_day))
+        # The same arithmetic the YouTube upload schedules by, so a project
+        # spread "two a day between nine and nine" lands on one calendar rather
+        # than on two that disagree.
+        return _as_postiz_date(
+            slot_time(start, index, self.per_day(project), first_hour, last_hour)
+        )
 
     # --- What became of what was filed --------------------------------------
 
@@ -1183,11 +1177,16 @@ class PostizPublisher:
             return True
         return highlight.postiz_imported_at >= highlight.rendered_at
 
-    async def execute(self, project: Project) -> List[Dict[str, Any]]:  # pragma: no cover
+    async def execute(self, project: Project, full: bool = False) -> List[Dict[str, Any]]:  # pragma: no cover
         """Imports every clip in the project, as a pipeline step.
 
         This is the "automatically import the clips" case: one run, and the
         whole project is sitting in Postiz waiting to be read and sent.
+
+        A clip already filed since its last cut is left alone in either mode:
+        filing it again does not replace the draft, it puts a second identical
+        one on the calendar, and `full` cannot undo the first. What `full`
+        changes is only the project's own record of the last run.
 
         Everything that can be known before any encoding starts — that there is
         an API key, that it works, that the account has channels — is checked
@@ -1214,7 +1213,7 @@ class PostizPublisher:
             project.fail_step("postiz", message)
             return []
 
-        self.start_service(project)
+        self.start_service(project, full=full)
 
         imported: List[Dict[str, Any]] = []
         failures: List[str] = []
@@ -1245,25 +1244,50 @@ class PostizPublisher:
                 self.record_failure(project, index, message)
                 failures.append(message)
 
+        # What this run produced, which is all this key has ever meant. The
+        # durable record of a filed clip is on the highlight — `postiz_post_id`
+        # and the channel states beside it — and that is what a resume reads and
+        # what the clip page draws.
         project.set_property("postiz_posts", imported)
-
-        if not imported and failures:
-            # Nothing was filed. Reporting that as a completed step is how a
-            # user ends up looking for drafts that were never made.
-            project.fail_step(
-                "postiz",
-                f"No clip could be imported. The first failure was: {failures[0]}",
-            )
-            logger.warning(f"PostizPublisher imported nothing for {project.project_id}")
-            return []
 
         if failures:
             report(f"Imported {len(imported)} of {total} clips; {len(failures)} failed")
         elif skipped:
             report(f"{skipped} clip(s) were already in Postiz and were left alone")
-        self.end_service(project)
+        self._settle(project, failures)
         logger.info(
-            f"PostizPublisher completed for project={project.project_id}: "
+            f"PostizPublisher finished for project={project.project_id}: "
             f"{len(imported)} imported, {skipped} already current, {len(failures)} failed"
         )
         return imported
+
+    def _settle(self, project: Project, failures: List[str]) -> None:
+        """Records how much of the project is actually sitting in Postiz.
+
+        Judged on the highlights rather than on this run's tally, so a resume
+        that filed the last two missing clips completes the step, and a run that
+        filed nine of ten does not — which was the whole bug: `end_service` used
+        to be called unconditionally, so one draft out of twenty read as "done"
+        and nothing said the other nineteen were never made.
+        """
+        missing = [h for h in project.highlights if not self.is_current(h)]
+        if not missing:
+            self.end_service(project)
+            return
+        if len(missing) == len(project.highlights):
+            # Nothing is filed. Reporting that as a completed step is how a
+            # user ends up looking for drafts that were never made.
+            project.fail_step(
+                "postiz",
+                f"No clip could be imported. The first failure was: {failures[0]}"
+                if failures
+                else "No clip was imported.",
+            )
+            logger.warning(f"PostizPublisher imported nothing for {project.project_id}")
+            return
+        reason = f" The first failure was: {failures[0]}" if failures else ""
+        project.partial_step(
+            "postiz",
+            f"{len(missing)} of {len(project.highlights)} clips are not in Postiz yet."
+            f"{reason} Run this step again to import only those.",
+        )

@@ -7,5 +7,9 @@
   "caption_defaults": {
     "enabled": true
   },
-  "postiz_per_day": 1
+  "postiz_per_day": 1,
+  "youtube_privacy": "schedule",
+  "youtube_schedule_per_day": 1,
+  "youtube_schedule_day_start_hour": 6,
+  "youtube_schedule_day_end_hour": 7
 }

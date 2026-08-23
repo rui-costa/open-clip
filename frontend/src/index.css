@@ -11,6 +11,14 @@
   --accent: #C42F00;
   --success: #00FF41;
   --error: #D40000;
+  /* A step that did some of its clips and not the rest. Amber rather than a
+     faded green or a second red, because it has to be told apart from both at a
+     glance, and because it is the one status the user is meant to press. */
+  --warning: #FFB000;
+  --on-warning: #121212;
+  /* The same fact as text on --bg rather than as a fill: #FFB000 is 1.7:1 there
+     and unreadable, so the sentence under the row gets its own darker value. */
+  --warning-text: #8A5A00;
   --text-main: var(--text);
   --text-muted: #6B6B6B;
   /* What a dead label is painted in, rather than a faded live one. Fading text
@@ -44,6 +52,12 @@
   --accent: #FF7A52;
   --success: #00CC33;
   --error: #FF4D4D;
+  /* Held down from the light theme's #FFB000 for the same reason --success is:
+     a full-brightness amber fill glares against #121212. */
+  --warning: #E09A00;
+  --on-warning: #121212;
+  /* 7.4:1 on the dark background, where the light theme's #8A5A00 is 2.1:1. */
+  --warning-text: #FFB000;
   --text-muted: #A0A0A0;
   /* 5.1:1 here, the same job as its light-theme twin. */
   --text-disabled: #858585;

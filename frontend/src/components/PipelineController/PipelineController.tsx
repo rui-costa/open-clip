@@ -1,7 +1,21 @@
 import React from 'react';
 import type { StepActivity } from '../../api';
 
-export type StepStatus = 'todo' | 'running' | 'executed' | 'completed' | 'error' | 'locked';
+/**
+ * `partial` is a step that did some of its clips and not the rest — nineteen of
+ * twenty drafts filed, three clips that would not cut. It is neither of the two
+ * things the badge used to say: "done" sends the user looking for drafts that
+ * were never made, and "failed" throws away the nineteen that are there.
+ * Pressing a partial step runs only what is still missing.
+ */
+export type StepStatus =
+  | 'todo'
+  | 'running'
+  | 'executed'
+  | 'completed'
+  | 'partial'
+  | 'error'
+  | 'locked';
 
 export interface PipelineStep {
   name: string;
@@ -15,7 +29,9 @@ export interface PipelineStep {
   /**
    * Why this step failed, for a step that says. `error` on its own is a colour:
    * it sent the user to the backend log for things as ordinary as an API key
-   * nobody had filled in. Present only while the status is `error`.
+   * nobody had filled in. Present while the status is `error`, and while it is
+   * `partial` — there the sentence carries how many clips are still missing,
+   * which is the only place that number is written down.
    */
   error?: string;
 }
@@ -39,13 +55,36 @@ interface PipelineControllerProps {
   prominence?: 'lead' | 'compact';
 }
 
+/** Whether this step has produced everything it was asked for. */
+export const isStepDone = (status: StepStatus) => status === 'executed' || status === 'completed';
+
 const stepColors = (status: StepStatus) => {
-  const isExecuted = status === 'executed' || status === 'completed';
+  const isExecuted = isStepDone(status);
   const isRunning = status === 'running';
   const isError = status === 'error';
+  // Its own colour rather than a faded green or a second red. Half-done is a
+  // state the user is meant to act on, and it has to be told apart from both
+  // the state that needs nothing and the state that produced nothing.
+  const isPartial = status === 'partial';
   return {
-    background: isError ? 'var(--error)' : isExecuted ? 'var(--success)' : isRunning ? 'var(--accent)' : 'var(--bg)',
-    color: isError ? 'var(--bg)' : isExecuted ? 'var(--on-success)' : isRunning ? 'var(--bg)' : 'var(--text)',
+    background: isError
+      ? 'var(--error)'
+      : isPartial
+        ? 'var(--warning)'
+        : isExecuted
+          ? 'var(--success)'
+          : isRunning
+            ? 'var(--accent)'
+            : 'var(--bg)',
+    color: isError
+      ? 'var(--bg)'
+      : isPartial
+        ? 'var(--on-warning)'
+        : isExecuted
+          ? 'var(--on-success)'
+          : isRunning
+            ? 'var(--bg)'
+            : 'var(--text)',
   };
 };
 
@@ -56,7 +95,8 @@ const stepColors = (status: StepStatus) => {
 const aggregateStatus = (steps: PipelineStep[]): StepStatus => {
   if (steps.some((s) => s.status === 'error')) return 'error';
   if (steps.some((s) => s.status === 'running')) return 'running';
-  if (steps.every((s) => s.status === 'completed' || s.status === 'executed')) return 'completed';
+  if (steps.some((s) => s.status === 'partial')) return 'partial';
+  if (steps.every((s) => isStepDone(s.status))) return 'completed';
   if (steps.every((s) => s.status === 'locked')) return 'locked';
   return 'todo';
 };
@@ -310,6 +350,10 @@ const statusLabel = (step: PipelineStep): string => {
       return 'done';
     case 'running':
       return 'running — press to stop';
+    case 'partial':
+      // Says what to do about it, because there is something to do about it:
+      // pressing it again picks up only the clips that are still missing.
+      return 'partly done — press to finish';
     case 'error':
       return 'failed';
     case 'locked':
@@ -327,8 +371,9 @@ const PipelineControllerRow: React.FC<PipelineControllerProps> = ({ onExecute, s
 
   const llmSteps = steps.filter((step) => step.isLlm);
   const anyRunning = steps.some((step) => step.status === 'running');
-  const allComplete =
-    steps.length > 0 && steps.every((step) => step.status === 'completed' || step.status === 'executed');
+  // A partial step is deliberately not complete: the celebration below is the
+  // page saying there is nothing left to do, and there is.
+  const allComplete = steps.length > 0 && steps.every((step) => isStepDone(step.status));
 
   // Same latch as the clip cards: true only when the pipeline finished while
   // this page was open. Reopening a finished project is silent.
@@ -393,7 +438,7 @@ const PipelineControllerRow: React.FC<PipelineControllerProps> = ({ onExecute, s
         onPointerEnter={(event) => isHoverPointer(event) && setHoveredStep(step.name)}
         onPointerLeave={(event) => isHoverPointer(event) && setHoveredStep(null)}
         aria-busy={isRunning}
-        className={`pipeline-step-btn ${isRunning ? 'pipeline-step-running' : ''} ${step.status === 'executed' || step.status === 'completed' ? 'pipeline-step-success' : ''} ${step.status === 'error' ? 'pipeline-step-error' : ''}`}
+        className={`pipeline-step-btn ${isRunning ? 'pipeline-step-running' : ''} ${isStepDone(step.status) ? 'pipeline-step-success' : ''} ${step.status === 'error' ? 'pipeline-step-error' : ''}`}
         style={stepButtonStyle(step.status, isHovered, isCompact)}
       >
         <span style={{ fontWeight: 900, fontSize: isCompact ? '0.8rem' : '1rem', letterSpacing: '0.5px' }}>
@@ -491,8 +536,12 @@ export const PipelineActivity: React.FC<PipelineActivityProps> = ({ steps, activ
   // A reason outlives the run it came from: it is read after the step has
   // stopped, which is the moment the activity entry above is thrown away.
   const failed = steps.filter((step) => step.status === 'error' && step.error);
+  // The same treatment for a step that half worked. Its sentence is the only
+  // place the count lives — "three of twenty clips are not in Postiz yet" —
+  // and without it the amber badge is a colour saying "something".
+  const incomplete = steps.filter((step) => step.status === 'partial' && step.error);
 
-  if (running.length === 0 && failed.length === 0) return null;
+  if (running.length === 0 && failed.length === 0 && incomplete.length === 0) return null;
 
   return (
     <div
@@ -542,6 +591,24 @@ export const PipelineActivity: React.FC<PipelineActivityProps> = ({ steps, activ
         >
           <span style={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>
             {step.label} stopped
+          </span>
+          {` — ${step.error}`}
+        </p>
+      ))}
+      {incomplete.map((step) => (
+        <p
+          key={step.name}
+          style={{
+            margin: 0,
+            fontSize: '0.7rem',
+            fontWeight: 700,
+            lineHeight: 1.4,
+            color: 'var(--warning-text)',
+            overflowWrap: 'anywhere',
+          }}
+        >
+          <span style={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            {step.label} partly done
           </span>
           {` — ${step.error}`}
         </p>

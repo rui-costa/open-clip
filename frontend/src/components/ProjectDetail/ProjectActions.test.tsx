@@ -91,6 +91,22 @@ describe('ProjectActions', () => {
       expect(badge.style.background).toBe('var(--error)');
     });
 
+    // The state the user is in when they close the panel and come back
+    // tomorrow. "done" there is the whole bug: one draft filed of twenty, and
+    // the bar saying the job is finished.
+    it('says partial on the trigger for a step that only half worked', async () => {
+      const { getExecutionStatus } = await import('../../api');
+      vi.mocked(getExecutionStatus).mockResolvedValue({
+        transcription: 'completed',
+        clipper: 'partial',
+      } as never);
+      renderActions();
+
+      const badge = await screen.findByText('partial');
+      expect(badge.style.background).toBe('var(--warning)');
+      expect(screen.queryByText('done')).toBeNull();
+    });
+
     it('opens itself when a step starts running, and lets you close it again', async () => {
       const { getExecutionStatus } = await import('../../api');
       vi.mocked(getExecutionStatus).mockResolvedValue({ clipper: 'running' } as never);

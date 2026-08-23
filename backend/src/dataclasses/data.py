@@ -6,6 +6,7 @@ import json
 import csv
 import logging
 import os
+import re
 import threading
 
 logger = logging.getLogger(__name__)
@@ -324,6 +325,13 @@ class Highlight:
     youtube_video_id: Optional[str] = None
     youtube_url: Optional[str] = None
     uploaded_at: Optional[str] = None
+    # What the video is on YouTube — private, unlisted or public — and, for a
+    # scheduled one, when YouTube itself turns it public. Recorded because it
+    # is the one thing about a published clip this app cannot show by linking
+    # to it: a scheduled short and a private one are the same page until the
+    # hour comes, and only this says which is which.
+    youtube_privacy: Optional[str] = None
+    youtube_publish_at: Optional[str] = None
     # Why the last publish attempt did not produce a video, or None when the
     # last attempt worked or none has been made. Publishing runs in the
     # background — it re-cuts the clip first, which outlives a browser request —
@@ -433,6 +441,10 @@ class Highlight:
             youtube_video_id=data.get("youtube_video_id"),
             youtube_url=data.get("youtube_url"),
             uploaded_at=data.get("uploaded_at"),
+            # Absent for every clip published before an upload could be
+            # anything but private, which is what the reader assumes for one.
+            youtube_privacy=data.get("youtube_privacy"),
+            youtube_publish_at=data.get("youtube_publish_at"),
             upload_error=data.get("upload_error"),
             # Absent for every clip nobody has imported, which is every clip
             # written before Postiz was wired in.
@@ -677,6 +689,80 @@ class PostizSettings:
         )
 
 
+# What an upload makes on YouTube. The first three are what the video is the
+# moment it lands. "schedule" is not a fourth privacy — YouTube has no such
+# state — it is private plus a publish time, which YouTube itself turns public
+# when the hour comes; it is offered as a fourth choice because that is how the
+# user thinks about it, and the uploader takes it apart again.
+UPLOAD_PRIVACY_CHOICES = ("private", "unlisted", "public", "schedule")
+
+
+def _as_hour(value: Any) -> Optional[int]:
+    """An hour of the day, or None for anything that is not one."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 0 <= value <= 23 else None
+
+
+@dataclass
+class UploadSettings:
+    """How this project's clips go up on YouTube, when it differs from the app's.
+
+    Shaped like `PostizSettings`, and for the same reason: one install cuts a
+    company's podcast and somebody's side project, and the two do not go public
+    on the same terms. Every field is None while the project has no opinion,
+    which is what keeps the default live — change it in Settings later and a
+    project that never chose follows it.
+
+    The four schedule fields mean nothing unless `privacy` is "schedule", and
+    they are kept anyway: a user who switches to private for a week and back
+    should not have to type their calendar out again.
+    """
+    privacy: Optional[str] = None
+    # How many of this project's clips are published per day. 0 means all of
+    # them at the same moment, which is a legitimate schedule — everything at
+    # nine on Friday — and not the same as having no opinion.
+    per_day: Optional[int] = None
+    # The day the schedule begins, as YYYY-MM-DD. None is "as soon as the
+    # upload is done", which is the only answer a run with no date can give.
+    start_date: Optional[str] = None
+    # The hours of the day the clips are spread between, first and last, read
+    # in the timezone of the machine running this.
+    day_start_hour: Optional[int] = None
+    day_end_hour: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Any) -> 'UploadSettings':
+        if not isinstance(data, dict):
+            return cls()
+
+        privacy = data.get("privacy")
+        if privacy not in UPLOAD_PRIVACY_CHOICES:
+            privacy = None
+
+        per_day = data.get("per_day")
+        if isinstance(per_day, bool) or not isinstance(per_day, int) or per_day < 0:
+            per_day = None
+
+        # Checked for shape rather than parsed: this is written back into a
+        # date input, and a string that is not a date empties it silently
+        # instead of showing the user something they never typed.
+        start_date = data.get("start_date")
+        if not isinstance(start_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date):
+            start_date = None
+
+        return cls(
+            privacy=privacy,
+            per_day=per_day,
+            start_date=start_date,
+            day_start_hour=_as_hour(data.get("day_start_hour")),
+            day_end_hour=_as_hour(data.get("day_end_hour")),
+        )
+
+
 # What a clip shows while it is sitting still: its thumbnail, or the video
 # frame it is parked on. A project chooses once for all of its clips, because
 # the choice is about how the project is reviewed rather than about one clip.
@@ -703,6 +789,10 @@ class ProjectSettings:
     # application's. Default-constructed and empty, which means "follow the
     # application settings" — see PostizSettings.
     postiz: PostizSettings = field(default_factory=PostizSettings)
+    # How this project's clips go up on YouTube — private, unlisted, public or
+    # scheduled — when that differs from the application's answer. Empty means
+    # "follow Settings", the way the Postiz block does.
+    upload: UploadSettings = field(default_factory=UploadSettings)
     # Thumbnail by default: a grid of stills is what the shorts will look like
     # in a feed, which is the question being asked while reviewing them. The
     # video frame is one click away either way.
@@ -729,6 +819,7 @@ class ProjectSettings:
             overlay=OverlayText.from_dict({**(data.get("overlay") or {}), "text": ""}),
             description=DescriptionSettings.from_dict(data.get("description")),
             postiz=PostizSettings.from_dict(data.get("postiz")),
+            upload=UploadSettings.from_dict(data.get("upload")),
             # Anything else — a typo, a value from a later version — reads as
             # the default rather than reaching the page as a state it cannot
             # draw.
@@ -896,8 +987,10 @@ class Project:
             # A step that is starting again, or that has just succeeded, is no
             # longer described by why it failed last time. Cleared here rather
             # than at each call site so no step can leave a stale reason behind
-            # a green badge.
-            if status != "error":
+            # a green badge. "partial" keeps its reason for the same reason
+            # "error" does: the badge says some of it did not happen, and the
+            # sentence is the only thing that says which part and why.
+            if status not in ("error", "partial"):
                 errors = data.get("step_errors") or {}
                 errors.pop(step, None)
                 data["step_errors"] = errors
@@ -915,9 +1008,24 @@ class Project:
         what sends someone to the backend log, and the log is not where a
         missing API key should have to be discovered.
         """
+        self._mark_step(step, "error", message)
+
+    def partial_step(self, step: str, message: str):
+        """Marks a step as having done some of its work but not all of it.
+
+        A step that cuts, publishes or files one thing per clip can finish with
+        eighteen of twenty done, and neither "completed" nor "error" is true of
+        that. Reported as itself so the badge stops claiming a job is finished
+        when a clip is still missing from it, and so pressing the step again is
+        an obvious thing to do — the run that follows picks up only what is
+        left.
+        """
+        self._mark_step(step, "partial", message)
+
+    def _mark_step(self, step: str, status: str, message: str):
         def mutate(data: Dict[str, Any]):
             statuses = data.get("step_statuses") or {}
-            statuses[step] = "error"
+            statuses[step] = status
             data["step_statuses"] = statuses
             errors = data.get("step_errors") or {}
             errors[step] = message

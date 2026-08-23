@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getClipPublication, getStudioEditUrl, uploadClipThumbnail } from '../../api';
+import { getClipPublication, getStudioEditUrl, uploadClipThumbnail, type UploadPrivacy } from '../../api';
+import { formatPublishAt } from '../../utils/uploadSchedule';
 import { Button } from '../Button';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { describeRequestFailure, useClipRender } from '../../hooks/useClipRender';
@@ -28,6 +29,13 @@ interface ClipActionsProps {
   youtubeUrl?: string | null;
   /** The published video's id, which is what addresses its Studio edit page. */
   youtubeVideoId?: string | null;
+  /**
+   * What the video is on YouTube, and — for a scheduled one — when YouTube
+   * turns it public. The only thing that tells a scheduled short from a
+   * private one: following the link shows the same page until the hour comes.
+   */
+  youtubePrivacy?: UploadPrivacy | null;
+  youtubePublishAt?: string | null;
   /**
    * When this clip was last published, which is how a finished upload job is
    * told from one that gave up: the job leaves `/active_processes` either way.
@@ -73,6 +81,8 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
   isRendered = true,
   youtubeUrl,
   youtubeVideoId,
+  youtubePrivacy,
+  youtubePublishAt,
   uploadedAt,
   renderedAt,
   postizUrl,
@@ -231,6 +241,19 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
           <a href={youtubeUrl} target="_blank" rel="noreferrer">
             {youtubeUrl}
           </a>
+        </p>
+      )}
+      {isPublished && youtubePrivacy && youtubePrivacy !== 'public' && (
+        // What it is up as. Worth a line of its own because the link above
+        // looks the same whether the video is private forever, unlisted, or
+        // waiting for an hour that has been chosen — and only one of those
+        // means anybody will ever see it without being sent the URL.
+        <p style={{ margin: 0, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+          {youtubePrivacy === 'schedule' && youtubePublishAt
+            ? `Private until ${formatPublishAt(youtubePublishAt)}, when YouTube publishes it.`
+            : youtubePrivacy === 'unlisted'
+              ? 'Unlisted: anyone with the link can watch it.'
+              : 'Private: only you can watch it.'}
         </p>
       )}
       {isPublished && (

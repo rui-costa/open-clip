@@ -1,0 +1,260 @@
+import React, { useId, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Modal } from '../Modal';
+import { DateField } from '../DateField';
+import {
+  getYoutubeStatus,
+  updateProjectSettings,
+  type UploadPrivacy,
+  type UploadProjectSettings,
+} from '../../api';
+import {
+  HOURS,
+  MAX_SCHEDULE_YEARS_AHEAD,
+  PER_DAY_CHOICES,
+  PRIVACY_LABELS,
+  earliestScheduleDate,
+  hourLabel,
+  latestScheduleDate,
+} from '../../utils/uploadSchedule';
+
+interface UploadPanelProps {
+  projectId: string;
+  /** What the project has stored, or undefined for one created before this existed. */
+  settings: UploadProjectSettings | undefined;
+  /** See CaptionStyler: `panel` is a row with a summary, `inline` is one text action. */
+  variant?: 'panel' | 'inline';
+}
+
+const EMPTY: UploadProjectSettings = {
+  privacy: null,
+  per_day: null,
+  start_date: null,
+  day_start_hour: null,
+  day_end_hour: null,
+};
+
+/** What the badge says, which is the shortest true thing about the setting. */
+const BADGE_LABELS: Record<UploadPrivacy, string> = {
+  private: 'Private',
+  unlisted: 'Unlisted',
+  public: 'Public',
+  schedule: 'Scheduled',
+};
+
+/**
+ * How this project's clips go up on YouTube, when that is not how the rest go.
+ *
+ * Publishing is the one thing this app does that it cannot undo, and one
+ * install cuts a company's podcast and somebody's side project: the two do not
+ * go public on the same terms. Settings holds the default; this is where a
+ * project disagrees with it.
+ *
+ * Following the application is a state of its own rather than a copy of its
+ * answer — the difference matters, because a copy stops following the moment
+ * the default changes, and picking a date here says nothing about wanting the
+ * privacy frozen too.
+ */
+export const UploadPanel: React.FC<UploadPanelProps> = ({ projectId, settings, variant = 'panel' }) => {
+  const queryClient = useQueryClient();
+  const [isOpen, setIsOpen] = useState(false);
+  const privacyId = useId();
+  const startDateId = useId();
+  const perDayId = useId();
+  const dayStartId = useId();
+  const dayEndId = useId();
+
+  // Asked only while the dialog is open: all this page wants from it is the
+  // default to name, and it is a round trip that says nothing otherwise.
+  const { data: youtube } = useQuery({
+    queryKey: ['youtubeStatus'],
+    queryFn: getYoutubeStatus,
+    enabled: isOpen,
+    retry: false,
+  });
+
+  const mutation = useMutation({
+    mutationFn: (next: Partial<UploadProjectSettings>) =>
+      updateProjectSettings(projectId, { upload: next }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['projectMetadata', projectId] });
+    },
+  });
+
+  const stored = settings ?? EMPTY;
+  const appPrivacy = youtube?.privacy ?? 'private';
+  // What would actually happen: this project's answer, or the one it is
+  // following. The schedule fields are shown under either, because a project
+  // that follows a scheduled default is on a schedule.
+  const effective: UploadPrivacy = stored.privacy ?? appPrivacy;
+
+  const badge = (
+    <span
+      className="status-badge"
+      style={
+        stored.privacy === null
+          ? undefined
+          : { background: 'var(--accent)', color: 'var(--on-accent, var(--bg))' }
+      }
+    >
+      {stored.privacy === null ? 'Default' : BADGE_LABELS[stored.privacy]}
+    </span>
+  );
+
+  const labelStyle: React.CSSProperties = {
+    fontWeight: 900,
+    fontSize: '0.65rem',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
+  };
+
+  const fieldStyle: React.CSSProperties = {
+    padding: 'var(--space-sm)',
+    background: 'var(--bg)',
+    color: 'var(--text)',
+    border: 'var(--border)',
+    fontFamily: 'inherit',
+    fontSize: '0.85rem',
+    width: '100%',
+    minHeight: '44px',
+  };
+
+  const hintStyle: React.CSSProperties = {
+    fontSize: '0.7rem',
+    color: 'var(--text-muted)',
+    lineHeight: 1.4,
+  };
+
+  /** A number field: an empty option is "follow Settings", not a value. */
+  const numberChange = (key: keyof UploadProjectSettings) => (value: string) =>
+    mutation.mutate({ [key]: value === '' ? null : Number(value) });
+
+  return (
+    <>
+      {variant === 'inline' ? (
+        <button type="button" className="text-action" onClick={() => setIsOpen(true)}>
+          YouTube
+          {badge}
+        </button>
+      ) : (
+        <button type="button" className="panel-button" onClick={() => setIsOpen(true)}>
+          <span>YouTube</span>
+          {badge}
+        </button>
+      )}
+
+      <Modal isOpen={isOpen} title="YouTube for this project" onClose={() => setIsOpen(false)} maxWidth="620px">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+            <label htmlFor={privacyId} style={labelStyle}>What an upload makes</label>
+            <select
+              id={privacyId}
+              value={stored.privacy ?? ''}
+              onChange={(e) =>
+                mutation.mutate({ privacy: (e.target.value || null) as UploadPrivacy | null })
+              }
+              style={fieldStyle}
+            >
+              <option value="">
+                Whatever Settings says ({PRIVACY_LABELS[appPrivacy] ?? appPrivacy})
+              </option>
+              {(Object.keys(PRIVACY_LABELS) as UploadPrivacy[]).map((value) => (
+                <option key={value} value={value}>{PRIVACY_LABELS[value]}</option>
+              ))}
+            </select>
+            <span style={hintStyle}>
+              A scheduled clip goes up private with a publish time on it; YouTube turns it public
+              itself when the time comes. Nothing here changes a clip that is already published.
+            </span>
+          </div>
+
+          {/* Only under a schedule, for the same reason as in Settings: these
+              say nothing about a clip that is public the moment it lands. */}
+          {effective === 'schedule' && (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                <label htmlFor={startDateId} style={labelStyle}>First clip goes public on</label>
+                <DateField
+                  id={startDateId}
+                  value={stored.start_date ?? ''}
+                  onCommit={(value) => mutation.mutate({ start_date: value || null })}
+                  min={earliestScheduleDate()}
+                  max={latestScheduleDate()}
+                  style={fieldStyle}
+                />
+                <span style={hintStyle}>
+                  Empty follows Settings, and Settings with no date publishes as soon as the
+                  upload is done. Today at the earliest — YouTube refuses a publish time behind
+                  it — and at most {MAX_SCHEDULE_YEARS_AHEAD} years out.
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                <label htmlFor={perDayId} style={labelStyle}>How many go public per day</label>
+                <select
+                  id={perDayId}
+                  // An empty string is "follow Settings" and 0 is "all at the
+                  // same moment" — two different answers, which is why the
+                  // value is not simply the number.
+                  value={stored.per_day === null ? '' : String(stored.per_day)}
+                  onChange={(e) => numberChange('per_day')(e.target.value)}
+                  style={fieldStyle}
+                >
+                  <option value="">Whatever Settings says</option>
+                  {PER_DAY_CHOICES.map((choice) => (
+                    <option key={choice.value} value={choice.value}>{choice.label}</option>
+                  ))}
+                </select>
+                <span style={hintStyle}>
+                  A clip keeps its slot however it was published, so publishing one card on its
+                  own puts it where the whole run would have.
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                <span style={labelStyle}>Spread between</span>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
+                  <label htmlFor={dayStartId} style={{ fontSize: '0.8rem' }}>From</label>
+                  <select
+                    id={dayStartId}
+                    value={stored.day_start_hour === null ? '' : String(stored.day_start_hour)}
+                    onChange={(e) => numberChange('day_start_hour')(e.target.value)}
+                    style={{ ...fieldStyle, width: 'auto' }}
+                  >
+                    <option value="">Default</option>
+                    {HOURS.map((hour) => (
+                      <option key={hour} value={hour}>{hourLabel(hour)}</option>
+                    ))}
+                  </select>
+                  <label htmlFor={dayEndId} style={{ fontSize: '0.8rem' }}>to</label>
+                  <select
+                    id={dayEndId}
+                    value={stored.day_end_hour === null ? '' : String(stored.day_end_hour)}
+                    onChange={(e) => numberChange('day_end_hour')(e.target.value)}
+                    style={{ ...fieldStyle, width: 'auto' }}
+                  >
+                    <option value="">Default</option>
+                    {HOURS.map((hour) => (
+                      <option key={hour} value={hour}>{hourLabel(hour)}</option>
+                    ))}
+                  </select>
+                </div>
+                <span style={hintStyle}>
+                  On this machine's clock. One clip a day goes out at the first hour; the rest of
+                  a day's clips are spaced evenly up to the last.
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+
+        {mutation.isError && (
+          <p role="alert" style={{ margin: 'var(--space-md) 0 0 0', fontSize: '0.75rem', color: 'var(--error)' }}>
+            Could not save that. Uploads would use the last saved setting, not this one.
+          </p>
+        )}
+      </Modal>
+    </>
+  );
+};
