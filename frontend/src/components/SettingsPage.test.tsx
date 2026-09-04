@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SettingsPage } from './SettingsPage';
@@ -52,6 +52,25 @@ describe('SettingsPage YouTube channel', () => {
     expect(screen.getByText(/Missing permission/)).toBeInTheDocument();
     // Uploads are unaffected, so the button is an offer rather than a demand.
     expect(screen.getByRole('button', { name: /Reconnect Channel/i })).toBeEnabled();
+  });
+
+  it('shows a refused authorisation as the error it is', async () => {
+    // The state that looked like nothing was wrong: the file is still there,
+    // the page said "Connected", and every upload failed.
+    vi.spyOn(api, 'getYoutubeStatus').mockResolvedValue({
+      connected: false,
+      expired: true,
+      reason:
+        'YouTube has rejected the stored authorisation for this channel: invalid_grant: ' +
+        'Token has been expired or revoked. Open Settings and connect the channel again.',
+      has_client_secrets: true,
+    });
+
+    renderPage();
+
+    const reason = await screen.findByText(/YouTube has rejected the stored authorisation/);
+    expect(reason).toHaveStyle({ color: 'var(--error)' });
+    expect(screen.getByRole('button', { name: /Connect Channel/i })).toBeEnabled();
   });
 
   it('opens the consent Google returns in a tab of its own', async () => {
@@ -196,10 +215,13 @@ describe('SettingsPage upload privacy', () => {
     await saved(update, { youtube_schedule_per_day: 2 });
 
     // Nine to nine unless somebody says otherwise, and picked on this
-    // machine's clock — which is the one thing the numbers cannot say.
-    expect(screen.getByLabelText(/From/)).toHaveValue('9');
-    expect(screen.getByLabelText(/^to$/)).toHaveValue('21');
-    fireEvent.change(screen.getByLabelText(/From/), { target: { value: '8' } });
+    // machine's clock — which is the one thing the numbers cannot say. Scoped
+    // to the YouTube window: the page carries a second one for Postiz, and
+    // "From" says nothing about which schedule it belongs to.
+    const window = within(screen.getByRole('group', { name: /YouTube clips go public/ }));
+    expect(window.getByLabelText(/From/)).toHaveValue('9');
+    expect(window.getByLabelText(/^to$/)).toHaveValue('21');
+    fireEvent.change(window.getByLabelText(/From/), { target: { value: '8' } });
     await saved(update, { youtube_schedule_day_start_hour: 8 });
   });
 });

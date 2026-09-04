@@ -123,8 +123,8 @@ export default function App() {
   const [uploadProgress, setUploadProgress] = useState(0);
 
   const createMutation = useMutation({
-    mutationFn: (vars: { file: File, resolution: string, aspectRatio: string }) => 
-      createProject(vars.file, vars.resolution, vars.aspectRatio, setUploadProgress),
+    mutationFn: (vars: { file: File }) =>
+      createProject(vars.file, setUploadProgress),
     onSuccess: (data) => {
       // Invalidate project list to reflect new creation immediately
       queryClient.invalidateQueries({ queryKey: ['projects'] });
@@ -157,6 +157,14 @@ export default function App() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] });
       queryClient.invalidateQueries({ queryKey: ['projectMetadata', projectId] });
+      // Every per-clip query is keyed by position, and a deletion shifts each
+      // later clip down one. Without this, clip N+1 keeps drawing the cached
+      // title, cues and thumbnail that were fetched for the clip that used to
+      // sit at N. The whole family goes, not just the deleted index, because
+      // every index at or after it now names a different clip.
+      for (const key of ['clipCaptions', 'clipThumbnail', 'clipDescription', 'clipPublication']) {
+        queryClient.invalidateQueries({ queryKey: [key, projectId] });
+      }
     },
     onError: (error: any) => console.error(error)
   });
@@ -176,9 +184,9 @@ export default function App() {
     }
   });
 
-  const handleSubmit = (resolution: string, aspectRatio: string) => {
+  const handleSubmit = () => {
     if (file) {
-      createMutation.mutate({ file, resolution, aspectRatio });
+      createMutation.mutate({ file });
     }
   };
 

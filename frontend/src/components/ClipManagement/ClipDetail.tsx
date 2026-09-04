@@ -23,10 +23,11 @@ import { TextOverlay } from './TextOverlay';
 import { OverlayTextEditor } from './OverlayTextEditor';
 import { OverlayStyler } from './OverlayStyler';
 import { ThumbnailEditor } from './ThumbnailEditor';
+import { ClipTrimmer } from './ClipTrimmer';
 import { ThumbnailPreview } from './ThumbnailPreview';
 import type { CaptionPreviewSource } from './ClipCaptionSettings';
 import { Button } from '../Button';
-import { targetAspectRatio } from '../../utils/aspectRatio';
+import { matchesOutputSettings, targetAspectRatio } from '../../utils/aspectRatio';
 
 /**
  * A state this page cannot get itself out of.
@@ -145,6 +146,7 @@ export const ClipDetail: React.FC = () => {
   const navigate = useNavigate();
   const [isEditingOverlay, setIsEditingOverlay] = useState(false);
   const [isEditingThumbnail, setIsEditingThumbnail] = useState(false);
+  const [isTrimming, setIsTrimming] = useState(false);
   // What the editor is typing, held here rather than in the dialog so the
   // player behind it redraws on every keystroke instead of waiting for the
   // saved value to come back from the backend.
@@ -255,9 +257,6 @@ export const ClipDetail: React.FC = () => {
   // separate flag claims is present.
   const renderedFilename = highlight.is_clip_generated ? highlight.generated_clip_filename : null;
   const isRendered = !!renderedFilename;
-  // Drawn over the video unless the file already carries them, in which case
-  // overlaying would double every word.
-  const showOverlay = !!captions?.cues.length && !highlight.captions_burned;
   // The title as it stands: what is being typed, or what the clip resolves to
   // — its own if it has one, otherwise the project's — or the values a new one
   // starts from. Read from the caption preview rather than from the highlight,
@@ -267,12 +266,36 @@ export const ClipDetail: React.FC = () => {
   // Same rule as the captions: a title already in the file's pixels is not
   // drawn again on top of itself. While the editor is open it is drawn anyway,
   // because that is the only way to see what is being changed.
-  const showTitle =
-    hasTitle && overlay.enabled && (isEditingOverlay || !highlight.overlay_burned);
   const sourceUrl = projectMetadata.files?.original_file
     ? getSourceVideoUrl(projectMetadata.project_id, projectMetadata.files.original_file)
     : null;
   const aspectRatio = targetAspectRatio(projectMetadata.settings, aspectRatiosData, resolutionsData);
+  // A trim moves the window and cuts nothing, so the file can be playing
+  // footage the timecodes no longer describe. Both stamps are ISO, so the later
+  // string is the later edit.
+  const needsRecut =
+    isRendered &&
+    !!highlight.trimmed_at &&
+    (!highlight.rendered_at || highlight.trimmed_at > highlight.rendered_at);
+  // The project's aspect ratio or resolution can change after a clip is cut,
+  // and nothing re-cuts it when they do. The player below is boxed to the
+  // settings now in force, so the old file played inside it is a crop this
+  // project will never render — the honest picture is the source window under
+  // the new shape, which is what the next render will be cut from. A project
+  // whose source has gone has no such window, so there the old cut stands.
+  const outputStale = isRendered && !matchesOutputSettings(projectMetadata.settings, highlight);
+  const playsRendered = !!renderedFilename && (!outputStale || !sourceUrl);
+  // Drawn over the video unless the file already carries them, in which case
+  // overlaying would double every word. A page back on the source preview is
+  // not showing those pixels at all, so the words go back on top.
+  const showOverlay = !!captions?.cues.length && (!playsRendered || !highlight.captions_burned);
+  // Same rule as the captions: a title already in the file's pixels is not
+  // drawn again on top of itself. While the editor is open it is drawn anyway,
+  // because that is the only way to see what is being changed.
+  const showTitle =
+    hasTitle &&
+    overlay.enabled &&
+    (isEditingOverlay || !playsRendered || !highlight.overlay_burned);
   // The thumbnail dialog picks a frame, so it needs a player of its own: the
   // one on this page is behind the scrim and cannot be scrubbed through it.
   //
@@ -358,17 +381,17 @@ export const ClipDetail: React.FC = () => {
                   clipper is re-run. */}
               <ClipPlayer
                 src={
-                  renderedFilename
+                  playsRendered
                     // Versioned by when it was cut: a regenerated clip keeps
                     // its filename, so without this the browser replays the
                     // copy it already has and the re-cut looks like it did
                     // nothing.
-                    ? getClipVideoUrl(projectId!, renderedFilename, highlight.rendered_at)
+                    ? getClipVideoUrl(projectId!, renderedFilename as string, highlight.rendered_at)
                     : (sourceUrl as string)
                 }
-                start={renderedFilename ? 0 : highlight.start}
-                end={renderedFilename ? null : highlight.end}
-                isPreview={!renderedFilename}
+                start={playsRendered ? 0 : highlight.start}
+                end={playsRendered ? null : highlight.end}
+                isPreview={!playsRendered}
                 aspectRatio={aspectRatio}
                 label={label}
                 cues={captions?.cues}
@@ -515,6 +538,8 @@ export const ClipDetail: React.FC = () => {
             hasOverlay={hasTitle}
             onEditOverlay={() => setIsEditingOverlay(true)}
             onEditThumbnail={() => setIsEditingThumbnail(true)}
+            onTrim={() => setIsTrimming(true)}
+            needsRecut={needsRecut}
           />
 
           <OverlayTextEditor
@@ -542,6 +567,25 @@ export const ClipDetail: React.FC = () => {
             // dialog's scrim, and picking a frame means moving the playhead.
             preview={thumbnailPreview}
             captions={captions}
+          />
+          <ClipTrimmer
+            projectId={projectId!}
+            clipIndex={clipIndexNum}
+            isOpen={isTrimming}
+            onClose={() => setIsTrimming(false)}
+            start={highlight.start}
+            end={highlight.end}
+            // Its own picture, like the thumbnail dialog: the player on this
+            // page is behind the scrim, and trimming means watching the edges.
+            // Always the source — the window is a position in it, and a cut
+            // file has nothing outside itself to trim back into.
+            sourceUrl={sourceUrl}
+            aspectRatio={aspectRatio}
+            label={label}
+            isRendered={isRendered}
+            // No re-cut passed: this page's own Regenerate button owns that job
+            // and reports it, so the dialog points at it rather than starting a
+            // second one it could not report on.
           />
           {isRendered && hasTitle && overlay.enabled && !highlight.overlay_burned && (
             <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>

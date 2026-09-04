@@ -72,6 +72,15 @@ interface ClipActionsProps {
   hasOverlay?: boolean;
   /** Opens the thumbnail editor: which frame stands for the clip, and what is written on it. */
   onEditThumbnail: () => void;
+  /** Opens the trimmer: where in the source this clip starts and ends. */
+  onTrim?: () => void;
+  /**
+   * True when the window has moved since the file was cut.
+   *
+   * A trim renders nothing, so the file can be playing footage the timecodes no
+   * longer describe. The button says so rather than leaving it to be noticed.
+   */
+  needsRecut?: boolean;
 }
 
 export const ClipActions: React.FC<ClipActionsProps> = ({
@@ -92,6 +101,8 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
   onEditOverlay,
   hasOverlay = false,
   onEditThumbnail,
+  onTrim,
+  needsRecut = false,
 }) => {
   const queryClient = useQueryClient();
 
@@ -355,6 +366,22 @@ export const ClipActions: React.FC<ClipActionsProps> = ({
       <Button variant="ghost" size="sm" style={rowStyle} onClick={onEditThumbnail}>
         Edit thumbnail
       </Button>
+      {onTrim && (
+        // Accent when the file has fallen behind the window, the same mark the
+        // grid card puts on this, and the words say it too rather than leaving
+        // a colour to carry it alone.
+        <Button
+          variant="ghost"
+          size="sm"
+          style={{
+            ...rowStyle,
+            ...(needsRecut ? { color: 'var(--accent)', borderColor: 'var(--accent)' } : {}),
+          }}
+          onClick={onTrim}
+        >
+          {needsRecut ? 'Trim — moved since this was cut' : 'Trim start and end'}
+        </Button>
+      )}
 
       {/* Mounted whether or not there is anything to say. A live region added
           to the document at the same moment as its first content is one some

@@ -21,7 +21,7 @@ template, where there is not.
 
 import hashlib
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pathlib import Path
@@ -109,8 +109,13 @@ def _fingerprint(path: Path) -> str:
 
 
 def _as_postiz_date(when: datetime) -> str:
-    """A moment in the shape Postiz reads: UTC, milliseconds, trailing Z."""
-    return when.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    """A moment in the shape Postiz reads: UTC, milliseconds, trailing Z.
+
+    Converted rather than assumed. The schedule is built on the machine's own
+    clock — "nine to nine" is nine where the user is, which is what the same
+    words mean on the YouTube side — and the wire format is UTC.
+    """
+    return when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _as_entries(created: Any) -> List[Dict[str, Any]]:
@@ -195,12 +200,18 @@ class PostizPublisher:
         clipper: Optional[Clipper] = None,
         client_factory: Optional[Callable[[], PostizClient]] = None,
         settings_reader: Optional[Callable[[str, Any], Any]] = None,
+        now: Optional[Callable[[], datetime]] = None,
     ):
         # Held for the reason the uploader holds one: importing a clip means
         # producing the file first, not finding one somebody else left behind.
         self.clipper = clipper or Clipper()
         self.client_factory = client_factory or PostizClient
         self._settings_reader = settings_reader
+        # Local rather than UTC, and injectable, for the reasons the uploader's
+        # clock is both: the user picks hours on their own clock, Postiz is told
+        # the same instant in UTC, and a schedule is a function of "now" that a
+        # test which cannot say when now is can only assert vaguely about.
+        self._now = now or (lambda: datetime.now().astimezone())
 
     def _setting(self, key: str, default: Any = None) -> Any:
         """One application-wide setting, which is the default for every project."""
@@ -566,6 +577,23 @@ class PostizPublisher:
             return str(own.post_type)
         return str(self._setting("postiz_post_type", "draft") or "draft")
 
+    def _schedule_number(self, project: Optional[Project], attribute: str, key: str,
+                         default: int) -> int:
+        """One number of the schedule: the project's, the application's, or the default.
+
+        The same resolution the uploader makes, field for field. A project that
+        has not answered carries None — not a copy of the application's answer —
+        which is what keeps the default live.
+        """
+        own = self._project_postiz(project)
+        value = getattr(own, attribute, None) if own is not None else None
+        if value is None:
+            value = self._setting(key, default)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
     def per_day(self, project: Optional[Project] = None) -> int:
         """How many of a project's clips land per day. 0 is all of them at once.
 
@@ -573,34 +601,62 @@ class PostizPublisher:
         before there was a choice — ten clips at the same minute, which is a
         calendar nobody can read and a feed nobody wants.
         """
-        own = self._project_postiz(project)
-        if own is not None and own.per_day is not None:
-            value = own.per_day
-        else:
-            value = self._setting("postiz_per_day", 0)
-        try:
-            return max(0, int(value))
-        except (TypeError, ValueError):
-            return 0
+        return max(0, self._schedule_number(project, "per_day", "postiz_per_day", 0))
 
-    def _day_window(self) -> Tuple[int, int]:
+    def _day_window(self, project: Optional[Project] = None) -> Tuple[int, int]:
         """The hours of the day posts are spread between, as (first, last).
 
         Nine to nine by default: the slots this produces are when a person
         would post, rather than the small hours that dividing a day evenly
         would land on.
         """
-        def hour(key: str, fallback: int) -> int:
-            try:
-                value = int(self._setting(key, fallback))
-            except (TypeError, ValueError):
-                return fallback
-            return min(23, max(0, value))
-
         return day_window(
-            hour("postiz_day_start_hour", DEFAULT_DAY_START_HOUR),
-            hour("postiz_day_end_hour", DEFAULT_DAY_END_HOUR),
+            self._schedule_number(
+                project, "day_start_hour", "postiz_day_start_hour", DEFAULT_DAY_START_HOUR
+            ),
+            self._schedule_number(
+                project, "day_end_hour", "postiz_day_end_hour", DEFAULT_DAY_END_HOUR
+            ),
         )
+
+    def _start_date(self, project: Optional[Project] = None) -> Optional[date]:
+        """The day this project's imports begin, if a day was named."""
+        own = self._project_postiz(project)
+        value = getattr(own, "start_date", None) if own is not None else None
+        if not value:
+            value = self._setting("postiz_schedule_start_date", "")
+        try:
+            return date.fromisoformat(str(value)) if value else None
+        except ValueError:
+            # A date nobody can parse is not a date. Falling back to "as soon
+            # as the import can place one" beats refusing to import over it.
+            logger.warning(f"Ignoring an unreadable Postiz schedule start date: {value!r}")
+            return None
+
+    def _schedule_start(self, project: Optional[Project] = None) -> datetime:
+        """The earliest moment this project's posts may be placed at.
+
+        The named day at the first hour of the window, or now plus the offset
+        if no day was named — and never earlier than that offset, because a
+        post filed behind the user's own calendar is one they cannot cancel,
+        and a date chosen last week is behind it.
+        """
+        try:
+            offset = int(self._setting("postiz_schedule_offset_minutes", DEFAULT_SCHEDULE_OFFSET_MINUTES))
+        except (TypeError, ValueError):
+            offset = DEFAULT_SCHEDULE_OFFSET_MINUTES
+
+        now = self._now()
+        earliest = now + timedelta(minutes=max(0, offset))
+        start_date = self._start_date(project)
+        if start_date is None:
+            return earliest
+        first_hour, _ = self._day_window(project)
+        named = now.replace(
+            year=start_date.year, month=start_date.month, day=start_date.day,
+            hour=first_hour, minute=0, second=0, microsecond=0,
+        )
+        return max(named, earliest)
 
     def _post_date(self, project: Optional[Project] = None, index: int = 0) -> str:
         """When this clip's post says it is for, as Postiz wants it.
@@ -615,18 +671,15 @@ class PostizPublisher:
         it cuts them, or one button on one card. Re-importing a clip moves it
         nowhere.
         """
-        try:
-            offset = int(self._setting("postiz_schedule_offset_minutes", DEFAULT_SCHEDULE_OFFSET_MINUTES))
-        except (TypeError, ValueError):
-            offset = DEFAULT_SCHEDULE_OFFSET_MINUTES
-        start = datetime.now(timezone.utc) + timedelta(minutes=max(0, offset))
-
-        first_hour, last_hour = self._day_window()
-        # The same arithmetic the YouTube upload schedules by, so a project
-        # spread "two a day between nine and nine" lands on one calendar rather
-        # than on two that disagree.
+        first_hour, last_hour = self._day_window(project)
+        # The same arithmetic, the same questions and the same clock the YouTube
+        # upload schedules by, so a project spread "two a day between nine and
+        # nine from Monday" lands on one calendar rather than on two that
+        # disagree about what it was asked.
         return _as_postiz_date(
-            slot_time(start, index, self.per_day(project), first_hour, last_hour)
+            slot_time(
+                self._schedule_start(project), index, self.per_day(project), first_hour, last_hour
+            )
         )
 
     # --- What became of what was filed --------------------------------------

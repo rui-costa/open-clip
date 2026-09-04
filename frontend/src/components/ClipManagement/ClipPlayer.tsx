@@ -41,6 +41,14 @@ interface ClipPlayerProps {
   initialOffset?: number;
   /** Reports the playhead, so a caller can act on the frame being shown. */
   onPositionChange?: (position: number) => void;
+  /**
+   * How long `src` itself is, once the browser has read its metadata.
+   *
+   * Only the media element knows this, and a caller moving the window — a trim
+   * — has to know where the source ends before it can stop the user dragging
+   * past it.
+   */
+  onSourceDuration?: (seconds: number) => void;
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -75,6 +83,7 @@ export const ClipPlayer: React.FC<ClipPlayerProps> = ({
   cues,
   initialOffset = 0,
   onPositionChange,
+  onSourceDuration,
 }) => {
   const ref = useRef<HTMLVideoElement>(null);
   const frameRef = useRef<number | null>(null);
@@ -220,7 +229,13 @@ export const ClipPlayer: React.FC<ClipPlayerProps> = ({
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={() => {
             const length = ref.current?.duration;
-            if (typeof length === 'number' && Number.isFinite(length)) setSourceDuration(length);
+            if (typeof length === 'number' && Number.isFinite(length)) {
+              setSourceDuration(length);
+              // Reported even when `end` is set and this component has no use
+              // for it: a caller moving the window needs the far edge, and this
+              // is the only place it is known.
+              onSourceDuration?.(length);
+            }
           }}
           onPlay={() => {
             setIsPlaying(true);

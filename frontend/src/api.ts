@@ -252,6 +252,16 @@ export type Highlight = {
   /** When the file was last written. The filename never changes, so this is
    *  what tells a browser holding the previous cut that there is a new one. */
   rendered_at?: string | null;
+  /** The output settings the file was cut with, or absent for one cut before
+   *  they were recorded. Changing the project's aspect ratio or resolution
+   *  re-cuts nothing, so these are what say whether the file on disk is still
+   *  the shape the project now asks for. */
+  rendered_aspect_ratio?: string | null;
+  rendered_resolution?: string | null;
+  /** When the window was last moved, or absent for one nobody has trimmed. A
+   *  trim re-cuts nothing, so a stamp later than `rendered_at` means the file
+   *  on disk still holds the window before the edit. */
+  trimmed_at?: string | null;
   /** Where this clip was published, once it has been uploaded to YouTube. */
   youtube_video_id?: string | null;
   youtube_url?: string | null;
@@ -330,6 +340,14 @@ export type PostizProjectSettings = {
   channel_settings: Record<string, Record<string, string>>;
   /** How many of this project's clips land per day. 0 is all at once, null follows Settings. */
   per_day: number | null;
+  /**
+   * The rest of the calendar, shaped exactly like the YouTube one and read by
+   * the same arithmetic: the day the run begins as YYYY-MM-DD, and the hours a
+   * day's posts are spread between. Null follows Settings.
+   */
+  start_date: string | null;
+  day_start_hour: number | null;
+  day_end_hour: number | null;
   /** What each post says, and what goes under it. Empty follows Settings. */
   text_template: string;
   comment_template: string;
@@ -366,6 +384,30 @@ export type UploadProjectSettings = {
 };
 
 /**
+ * What a project asks the highlights prompt for, when it differs from the app's.
+ *
+ * The prompt used to state how many segments to find and how long they may run
+ * in its own text, which made every project a podcast cut into 7–12 shorts. A
+ * two-hour interview and a ten-minute talk do not hold the same number of good
+ * moments, so these are settings.
+ *
+ * Every number is null while the project has no opinion, which keeps the
+ * application default live: change it in Settings and a project that never
+ * chose follows it. `guidance` is free text added to the prompt — what this
+ * project counts as a highlight — and empty means the same thing null does.
+ */
+export type HighlightProjectSettings = {
+  /** How many segments a run returns, at least and at most. */
+  min_clips: number | null;
+  max_clips: number | null;
+  /** How long one may run, in seconds. Hard limits, not preferences. */
+  min_duration: number | null;
+  max_duration: number | null;
+  /** Extra instructions for this project, in the user's own words. */
+  guidance: string;
+};
+
+/**
  * What an idle clip shows, project-wide.
  *
  * `thumbnail` is the default: a grid of stills is what the shorts will look
@@ -377,6 +419,30 @@ export type ClipPreview = 'thumbnail' | 'video';
 /** One placeholder a description template may use, as described by the backend. */
 export type DescriptionField = { field: string; description: string };
 
+/**
+ * One title the metadata step wrote for the whole video, with the posts that
+ * go with it. `summary` is the video's description and is the same sentence on
+ * every title — the prompt returns one summary for the video, not one per
+ * title.
+ */
+export type VideoTitle = {
+  index: number;
+  title: string;
+  summary: string;
+  post_for_x: string;
+  post_for_reddit: string;
+  post_for_linkedin: string;
+  /** Why this title was picked as one of the best, or empty for the rest. */
+  reason: string;
+};
+
+/** What the metadata step wrote about the video as a whole. */
+export type VideoMetadata = {
+  components: VideoTitle[];
+  /** The best titles, by position in `components`. */
+  top_recommendations: { index?: number; reason?: string }[];
+};
+
 export type ProjectMetadata = {
   project_id: string;
   name: string;
@@ -384,6 +450,8 @@ export type ProjectMetadata = {
   // Cut clips are not a separate array: they are the highlights with
   // `is_clip_generated`, in that order.
   highlights: Highlight[];
+  /** Titles and a description for the whole video, from the Metadata step. */
+  video_metadata?: VideoMetadata;
   // Output of prompt-defined LLM tasks that have no typed field, keyed by task name.
   llm_outputs?: Record<string, unknown>;
   clips_count?: number;
@@ -399,6 +467,8 @@ export type ProjectMetadata = {
      */
     overlay?: OverlayText;
     description?: DescriptionSettings;
+    /** What this project asks a highlights run for, when it differs from the app's. */
+    highlights?: HighlightProjectSettings;
     /**
      * What a clip shows while it is sitting still: its thumbnail, or the video
      * frame it is parked on. One choice for the whole project, because it is
@@ -428,6 +498,17 @@ export type SettingsResponse = {
     // Where a new project's caption settings start. Changing it never touches
     // projects that already exist.
     caption_defaults?: Partial<CaptionSettings>;
+    // Where a new project's title look starts — font, size, placement, colours,
+    // timing — and, like the project setting it seeds, never any words.
+    overlay_defaults?: Partial<OverlayText>;
+    // What a new project's clip cards show at rest. Same one-way copy as the
+    // two above: an existing project keeps whatever it chose.
+    clip_preview_default?: ClipPreview;
+    // What every highlights run asks for unless a project disagrees: how many
+    // segments, how long they may be, and any standing instructions. Unlike the
+    // three defaults above this is read when the step runs, so editing it
+    // changes what an existing project finds on its next run.
+    highlight_defaults?: Partial<HighlightProjectSettings>;
     // The text and template every project's descriptions start from. Unlike
     // caption defaults these are read at upload time, so editing them changes
     // what existing projects publish.
@@ -462,6 +543,11 @@ export type SettingsResponse = {
     postiz_schedule_offset_minutes?: number;
     // How many clips land per day. 0 — the default — is all of them at once.
     postiz_per_day?: number;
+    // The day the run begins, read on this machine's clock. Empty is "as soon
+    // as a post may be placed", which is the offset ahead of now. The same
+    // question the YouTube schedule asks, because the two answer to one
+    // calendar.
+    postiz_schedule_start_date?: string;
     // The hours a day's posts are spread between, first and last.
     postiz_day_start_hour?: number;
     postiz_day_end_hour?: number;
@@ -496,18 +582,16 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
 }
 
 export const createProject = async (
-  file: File, 
-  resolution: string,
-  aspectRatio: string,
+  file: File,
   onProgress?: (progress: number) => void
 ): Promise<{ project_id: string }> => {
-  // 1. Init project metadata
+  // 1. Init project metadata. Resolution and aspect ratio are not sent: the
+  // project starts on the application defaults and both are changed in Project
+  // settings afterwards, against the previews.
   const initResponse = await fetch(`${BASE_URL}/project/init`, {
     method: 'POST',
-    body: JSON.stringify({ 
-      filename: file.name,
-      resolution,
-      aspectRatio
+    body: JSON.stringify({
+      filename: file.name
     })
   });
   const { project_id } = await initResponse.json();
@@ -646,14 +730,6 @@ export const getResolutionMap = async (): Promise<Record<string, string>> => {
 
 export const getAspectRatioMap = async (): Promise<Record<string, string>> => {
   return apiRequest<Record<string, string>>('/aspect_ratios');
-};
-
-export const getResolutions = async (): Promise<string[]> => {
-  return Object.keys(await getResolutionMap());
-};
-
-export const getAspectRatios = async (): Promise<string[]> => {
-  return Object.keys(await getAspectRatioMap());
 };
 
 /**
@@ -945,6 +1021,7 @@ export const updateProjectSettings = async (
     captions?: Partial<CaptionSettings>;
     overlay?: Partial<OverlayText>;
     description?: Partial<DescriptionSettings>;
+    highlights?: Partial<HighlightProjectSettings>;
     clip_preview?: ClipPreview;
     postiz?: Partial<PostizProjectSettings>;
     upload?: Partial<UploadProjectSettings>;
@@ -991,6 +1068,25 @@ export const updateClipOverlay = async (
   return apiRequest(`/project/${projectId}/clip/${clipIndex}/overlay`, {
     method: 'PUT',
     body: JSON.stringify({ overlay }),
+  });
+};
+
+/**
+ * Where one clip starts and ends in the source, in seconds.
+ *
+ * Both numbers go together rather than a delta: the editor holds the window and
+ * the user watches it while nudging an edge. What comes back is the window as
+ * stored — `start` never goes below zero — plus the stamp that says the cut file
+ * is now behind it, since saving a trim renders nothing.
+ */
+export const updateClipTrim = async (
+  projectId: string,
+  clipIndex: number,
+  window: { start: number; end: number }
+): Promise<{ status: string; start: number; end: number; trimmed_at: string }> => {
+  return apiRequest(`/project/${projectId}/clip/${clipIndex}/trim`, {
+    method: 'PUT',
+    body: JSON.stringify(window),
   });
 };
 

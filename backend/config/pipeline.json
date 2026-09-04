@@ -26,6 +26,13 @@
       ],
       "auto_run": false
     },
+    "thumbnails": {
+      "command": "thumbnails",
+      "depends_on": [
+        "highlights"
+      ],
+      "auto_run": false
+    },
     "upload": {
       "command": "upload",
       "depends_on": [
@@ -46,6 +53,7 @@
     "highlights",
     "metadata",
     "clipper",
+    "thumbnails",
     "upload",
     "postiz"
   ]

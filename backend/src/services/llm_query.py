@@ -8,6 +8,8 @@ from backend.src.dataclasses.data import Project, Highlights, VideoMetadata
 from backend.src.infrastructure.credentials import LocalCredentialProvider
 from backend.src.infrastructure.gemini_client import GeminiClient, describe_error
 from backend.src.infrastructure.schema_validator import validate
+from backend.src.services import highlight_options
+from backend.src.services.highlight_options import format_seconds
 from backend.src.services.llm_tasks import LLMTask, SchemaNotFoundError, discover_tasks
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,22 @@ CONTEXT_PROVIDERS: Dict[str, Callable[[Project], Any]] = {
     "source_url": lambda project: project.settings.description.source_url,
     "highlights": lambda project: json.dumps([h.to_dict() for h in project.highlights], indent=2),
     "video_metadata": lambda project: json.dumps(project.video_metadata.to_dict(), indent=2),
+    # What this project asks a highlights run for, after the project, the
+    # application and the shipped defaults have each had their say. Resolved
+    # per placeholder so a prompt asking only for the clip counts never has to
+    # mention the lengths.
+    "min_clips": lambda project: highlight_options.resolve(project).min_clips,
+    "max_clips": lambda project: highlight_options.resolve(project).max_clips,
+    "min_duration": lambda project: format_seconds(
+        highlight_options.resolve(project).min_duration
+    ),
+    "max_duration": lambda project: format_seconds(
+        highlight_options.resolve(project).max_duration
+    ),
+    # Free text the user wrote for this project — what it counts as a
+    # highlight. Empty when nobody has written any, which leaves the line it
+    # sits on blank rather than putting an empty heading in the prompt.
+    "highlight_guidance": lambda project: highlight_options.resolve(project).guidance,
 }
 
 

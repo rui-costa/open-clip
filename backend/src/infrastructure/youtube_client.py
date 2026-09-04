@@ -4,10 +4,11 @@ from pathlib import Path
 import googleapiclient.discovery
 import googleapiclient.http
 from google.oauth2.credentials import Credentials
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from typing import Dict, Any, Optional
 
-from backend.src.infrastructure.youtube_auth import stored_scopes
+from backend.src.infrastructure.youtube_auth import mark_token_rejected, stored_scopes
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,18 @@ READ_SCOPES = {
     "https://www.googleapis.com/auth/youtube.force-ssl",
     "https://www.googleapis.com/auth/youtubepartner",
 }
+
+
+def _refusal(error: RefreshError) -> str:
+    """What Google said, without the tuple it arrives wrapped in.
+
+    `str(RefreshError)` is `('invalid_grant: Token has been expired or revoked.',
+    {'error': ...})` — the same sentence twice, inside punctuation that belongs
+    to Python. Only the first part is worth showing to somebody deciding what
+    to click.
+    """
+    detail = error.args[0] if error.args else ""
+    return str(detail).strip() or "no reason given"
 
 
 class MissingCredentialsError(Exception):
@@ -46,7 +59,28 @@ class YoutubeClient:
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                try:
+                    creds.refresh(Request())
+                except RefreshError as e:
+                    # Google refused the refresh token itself: it was revoked,
+                    # or it expired because the OAuth client is still in
+                    # Testing, where refresh tokens die after seven days. The
+                    # file on disk looks fine and says the channel is
+                    # connected, so without this the failure arrives as an
+                    # opaque invalid_grant from deep inside the auth library.
+                    # It is the same fix as having no token at all: authorise
+                    # the channel again.
+                    message = (
+                        "YouTube has rejected the stored authorisation for this channel: "
+                        f"{_refusal(e)}. Open Settings and connect the channel again, then "
+                        "run this step again. If this keeps happening every week, the OAuth "
+                        "client in Google Cloud Console is still in Testing, where refresh "
+                        "tokens expire after seven days."
+                    )
+                    # Remembered on disk, so Settings stops showing this channel
+                    # as connected while nothing it does can work.
+                    mark_token_rejected(message, Path(credentials_path))
+                    raise MissingCredentialsError(message) from e
             else:
                 raise MissingCredentialsError(
                     "No usable YouTube credentials. Authorise a channel so "

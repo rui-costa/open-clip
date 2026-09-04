@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../Modal';
 import { OverlayControls } from './OverlayControls';
+import { PromoteToDefaults } from '../PromoteToDefaults';
 import {
   DEFAULT_OVERLAY_TEXT,
   updateProjectSettings,
@@ -152,6 +153,13 @@ export const OverlayStyler: React.FC<OverlayStylerProps> = ({ projectId, overlay
             what is on screen.
           </p>
         )}
+
+        {/* Wordless on the way up too: what travels is the look, which is the
+            only part of a title that can be the same on every project. */}
+        <PromoteToDefaults
+          build={() => ({ overlay_defaults: { ...current, text: '' } })}
+          hint="New projects start drawing their titles this way. Projects that already exist keep their own look."
+        />
       </Modal>
     </>
   );

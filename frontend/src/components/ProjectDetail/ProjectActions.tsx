@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { PipelineActivity, PipelineController, isStepDone } from '../PipelineController/PipelineController';
 import type { StepStatus } from '../PipelineController/PipelineController';
 import { ProjectSettingsMenu } from './ProjectSettingsMenu';
-import { HighlightPanel } from './HighlightPanel';
+import { WritingPanel } from './WritingPanel';
 import {
   downloadMarkerEdl,
   getExecutionStatus,
@@ -51,10 +51,6 @@ export const ProjectActions: React.FC<ProjectActionsProps> = ({
   // One at a time: two panels hanging over the page from the same bar would
   // overlap each other.
   const [openMenu, setOpenMenu] = useState<'pipeline' | 'settings' | 'writing' | null>(null);
-  // Which highlight the writing menu is showing, and which way the last page
-  // went so the incoming panel enters from that side.
-  const [writingIndex, setWritingIndex] = useState(0);
-  const [swapDirection, setSwapDirection] = useState<1 | -1>(1);
   const pipelineMenuId = useId();
   const settingsMenuId = useId();
   const writingMenuId = useId();
@@ -157,13 +153,6 @@ export const ProjectActions: React.FC<ProjectActionsProps> = ({
     };
   }, [openMenu]);
 
-  // Stable, so the memo on the panel is not undone by the one prop that would
-  // otherwise be new on every render.
-  const handlePage = React.useCallback((direction: 1 | -1, nextIndex: number) => {
-    setSwapDirection(direction);
-    setWritingIndex(nextIndex);
-  }, []);
-
   const exportMutation = useMutation({
     mutationFn: () => downloadMarkerEdl(projectId, metadata.name),
   });
@@ -226,7 +215,8 @@ export const ProjectActions: React.FC<ProjectActionsProps> = ({
         >
           {/* "View AI Output" named where the text came from, and opened a
               panel headed "Content Highlights" — two names for one thing,
-              neither of them what it is. It is the writing. */}
+              neither of them what it is. It is the writing: the project's
+              titles and description. A clip's own writing is on the clip. */}
           Writing
         </button>
 
@@ -235,13 +225,10 @@ export const ProjectActions: React.FC<ProjectActionsProps> = ({
             id={writingMenuId}
             className="project-actions__menu project-actions__menu--wide menu-enter"
           >
-            <HighlightPanel
+            <WritingPanel
               projectId={projectId}
-              highlights={metadata.highlights}
+              videoMetadata={metadata.video_metadata}
               llmOutputs={metadata.llm_outputs ?? NO_LLM_OUTPUTS}
-              index={writingIndex}
-              swapDirection={swapDirection}
-              onPage={handlePage}
             />
           </div>
         )}

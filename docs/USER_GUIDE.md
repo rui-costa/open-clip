@@ -21,7 +21,7 @@ To start a new project, click the upload button to navigate to the **Upload Scre
 ![Upload Screen](../images/upload_screen.png)
 
 1. Select your video file.
-2. Provide necessary project details.
+2. Create the project. Nothing else is asked for here — the resolution and the aspect ratio come from the application defaults and are changed later in **Project settings**, against the clip previews that show what the choice does.
 3. Upon submission, the project is created, and you are automatically navigated to the **Project Details** page.
 
 ## 3. Running the Pipeline and Managing Details
@@ -33,9 +33,11 @@ In the **Project Details** view, the project is initialized but not yet processe
 
 ![Pipeline menu](../images/pipeline_menu.png)
 
-**Project settings** holds the aspect ratio, the resolution, what the cards show while they are paused, and the way into this project's **Captions** and **Description**.
+**Project settings** holds the aspect ratio, the resolution, what the cards show while they are paused, and the way into this project's **Highlights**, **Captions** and **Description**. The aspect ratio and the resolution are changed here at any point in the project's life — the clip previews are drawn from the source and re-box themselves to whatever the two settings resolve to, so you can see the framing before anything is cut. A clip already rendered keeps the file it was cut from until it is cut again. **Regenerate clip** does that for one clip, and every publish — YouTube or Postiz — cuts the clip afresh before it sends it, so what goes out is framed the way the page is. Re-running the **Clips** step on its own skips clips that are already on disk; it is **Run full pipeline** that re-cuts the lot.
 
 ![Project settings](../images/project_settings.png)
+
+**Writing** holds what the Metadata step wrote about the video as a whole: its description, and the ten title candidates with the best two marked and the reason each was picked, along with the social posts that go with them. It is about the project, not about any one clip — what the model wrote for a single clip (its hook, its quote and its per-platform posts) is on that clip's card and detail page.
 
 1. **Trigger Processing**: Click the action to start the pipeline. The interface is reactive and will update in real-time as the backend processes the video.
 2. **Review Output**: Once complete, you can view the transcription, manage generated clips, and perform clip-specific actions.
@@ -49,6 +51,17 @@ The row of buttons on the card, in order: upload to YouTube, caption settings fo
 Opening a clip gives it the whole window: the player with its title and captions drawn over it, the transcript, what the model wrote for each platform, the exact description an upload would carry, and the actions.
 
 ![Clip detail](../images/clip_detail.png)
+
+### What the Highlights step looks for
+**Project settings → Highlights** decides what a highlights run is asked for, before it runs:
+
+1. **How many clips**: the fewest and the most segments a run returns. A two-hour interview holds more good moments than a ten-minute talk, and this is where you say so.
+2. **How long a clip may be**: the shortest and the longest, in seconds. These are hard limits the model rejects against, not preferences — a segment outside them is not returned at all.
+3. **What counts as a highlight here**: free text added to the prompt as your own instructions ("prefer the guest over the host", "skip anything about pricing"). It outranks the prompt's own preferences but not its rules; the loop test, the verbatim transcript text and the timings still hold.
+
+Every field is empty by default, which means *follow Settings* rather than a copy of what Settings currently says — change the application default later and this project follows it. **Settings → Highlights** holds those application-wide answers, and **Save as application default** in the panel promotes this project's to them.
+
+None of it touches highlights that have already been found. Re-run the **Highlights** step to use new settings, which replaces the ones on the project.
 
 ## 4. Captions and Animated Subtitles
 The **Captions** panel opens from **Project settings → Captions** on the project page, and from **Captions** under Actions on any clip's detail page. Captions are a project setting either way — the renderer burns the same style into every clip — so setting them from the project page decides it before anything is cut.
@@ -87,6 +100,23 @@ This title is also the text on the clip's thumbnail, which is the thing a viewer
 
 Changing the project's overlay configuration reaches every still immediately, the same way a caption restyle reaches every preview — and, the same way, it only reaches a rendered clip when that clip is cut again. A clip that has written its own title keeps the look it was given; restyle it in its own dialog.
 
+### Trimming the start and end of a clip
+The Highlights step picks each window out of the transcript, so its edges land on word boundaries — which are not always the right boundaries. A clip that opens on half a breath, or runs a beat past the punchline, is off by a second or two.
+
+The scissors button on every clip card opens **Trim**, and the same thing is on the clip page as **Trim start and end**. The dialog is the clip playing on the left, at the largest size the window allows, with the controls beside it.
+
+The quickest way to trim is to watch it. Scrub to the frame the clip should open on and press **⤒ Start here**; scrub to where it should close and press **⤓ End here**. The playhead's position in the source is shown between the two buttons, and the picture jumps to whichever edge you just moved so you can see the result immediately.
+
+Held to the clip's own window, marking can only ever move an edge inwards — there is nothing before the in point to scrub to. Tick **Play 5s either side** and the player runs into the surrounding footage, so the same press moves an edge outwards too.
+
+Beside the picture each edge also has −1s / −0.1s / +0.1s / +1s buttons for an adjustment smaller than a scrub can aim at, and a box for an exact number of seconds. The clip's length is shown under them.
+
+Both edges are held to what is actually there. The start cannot go before the beginning of the source, the end cannot go past the end of it, and the two cannot close to less than half a second apart — the mark buttons go quiet rather than putting an edge somewhere you did not point at.
+
+A trim moves the highlight and cuts nothing. If the clip has already been rendered, the file on disk still holds the window it was cut from, so **Save and re-cut** saves and starts the render in one press — or save now and re-cut later. Until you do, both the trim and the regenerate buttons on that card are marked, and their labels say the clip has moved since it was cut.
+
+The captions follow the window: words that fall outside it stop appearing, and words the new window has picked up start appearing. A thumbnail frame chosen from further into the clip than the trim now leaves is pulled back inside it.
+
 ### Regenerating a single clip
 **Regenerate clip** re-cuts the one clip you are looking at with whatever its settings now say — its title, its captions, and the project's aspect ratio and resolution. Every other rendered clip is left alone, which is the difference between this and re-running the **Clips** step, and it is also how a clip that has never been cut gets rendered on its own.
 
@@ -95,7 +125,7 @@ The encode runs on the backend and keeps going if you leave the page. The button
 ## 6. Thumbnails
 Every clip has a thumbnail without being asked for one: the first frame of the clip, with the clip's title drawn on it and no subtitles. If that is the thumbnail you want, there is nothing to do.
 
-No picture file is made in advance. A thumbnail is a frame of the clip with text over it, and the app draws both — so what you see on the clip page and on every card *is* the thumbnail, live, updating the moment you change it. The image itself is rendered once, at upload, and attached to the video.
+No picture file is made in advance. A thumbnail is a frame of the clip with text over it, and the app draws both — so what you see on the clip page and on every card *is* the thumbnail, live, updating the moment you change it. The image itself is written when the clip is published, into the project's `thumbnails/` folder, for you to attach in YouTube Studio — nothing sends it to YouTube.
 
 The title on it is worked out rather than typed, in this order:
 
@@ -114,11 +144,13 @@ Whichever line wins, it is drawn in the project's overlay configuration — see 
 1. **Which frame**: scrub the player at the top of the dialog to the frame you want and press **Use the frame showing now**. A frame past the end of the clip is pulled back inside it, because the source keeps going where the clip does not.
 2. **What is written on it**: the clip's title can be switched off, the subtitles can be switched on — only the line being spoken on the chosen frame is drawn — and **Extra text** adds a second line that appears on the picture and never on the video. It gets its own size, position and width, in percentages of the frame like every other text control here.
 
-**Back to defaults** returns the clip to the first frame with its title on it. **Make the thumbnail** is what produces the file itself — to download it, or to check it against the preview. It is burned by the renderer that cuts the clips, at the project's aspect ratio and with the fonts the burn uses, so it is the frame rather than an impression of it.
+**Back to defaults** returns the clip to the first frame with its title on it. **Make the thumbnail** produces the file itself — to download it, or to check it against the preview. It is burned by the renderer that cuts the clips, at the project's aspect ratio and with the fonts the burn uses, so it is the frame rather than an impression of it. You never have to press it before publishing: an upload writes the picture from the same settings if the clip has not got one yet, and leaves the one you made alone if it has.
+
+There is also a **Thumbnails** step in the pipeline, next to Clips and Upload, which draws the file for every clip in the project in one run. It redraws all of them every time, unlike the Clips step: a still is one frame rather than a minute of encoding, and the reason to press it is usually that the pictures on disk were drawn before the overlay titles were restyled — skipping the ones that already exist would skip exactly the clips the run is for. Nothing you chose is touched: each still is drawn again from that clip's own settings, so a picture you made in the editor comes back as itself. It is not part of **Run full pipeline**; it is a step you press.
 
 A clip that is sitting still shows its thumbnail rather than whichever frame the player happens to be parked on — on the clip's own page and on every card in the grid. It opens on the frame the thumbnail is taken from, so the still is not one moment wearing another moment's title. Pressing play, or scrubbing anywhere, hands the picture back to the video. **Still clips show** in the project's options bar switches the whole project between **Thumbnail** and **Video frame**, which is the one to pick while cutting rather than reviewing. The caption, overlay and thumbnail dialogs always show the footage: their previews exist to show a paused frame.
 
-> Thumbnails are not sent to YouTube. A video published from here gets whichever frame YouTube picks for it, and the custom picture is set by hand in Studio. The file to upload there is the one in the project's `thumbnails/` folder — the picture you made and can look at — which **Make the thumbnail** writes.
+> Thumbnails are not sent to YouTube. A video published from here gets whichever frame YouTube picks for it, and the custom picture is set by hand in Studio. The file to upload there is the one in the project's `thumbnails/` folder — the picture you made and can look at — written by **Make the thumbnail**, or by the upload itself for a clip that has not got one.
 
 ## 7. YouTube Descriptions
 Every clip is uploaded with a description assembled from four sources: what the model wrote about that clip, the original video this project was cut from, text belonging to this project, and text you keep on every project.
@@ -184,7 +216,7 @@ Adjust your configuration (API keys, models, etc.). Changes made here are writte
 
 | File | Holds | In git |
 | --- | --- | --- |
-| `settings.json` | Application settings: theme, model, codec, log level, pipeline and caption defaults. | Yes |
+| `settings.json` | Application settings: theme, model, codec, log level, pipeline, caption and highlight defaults. | Yes |
 | `user_settings.json` | Your own content: the default description, the Postiz post and comment templates, and the Postiz server URL. | No |
 | `secrets.json` | Credentials and account identifiers: the Gemini API key, the YouTube client secrets, the Postiz API key and channel IDs. | No |
 

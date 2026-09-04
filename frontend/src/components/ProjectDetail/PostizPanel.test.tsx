@@ -29,6 +29,9 @@ const FOLLOWING: PostizProjectSettings = {
   post_type: null,
   channel_settings: {},
   per_day: null,
+  start_date: null,
+  day_start_hour: null,
+  day_end_hour: null,
   text_template: '',
   comment_template: '',
 };
@@ -55,10 +58,20 @@ describe('PostizPanel', () => {
   it('follows the application settings until the project disagrees', async () => {
     await open();
 
-    expect(screen.getByText('Default')).toBeDefined();
+    // The badge, not the "Default" option each hour select offers.
+    expect(screen.getByText('Default', { selector: '.status-badge' })).toBeDefined();
     expect(screen.getByLabelText(/Coffee and Bytes/)).toBeChecked();
     expect(screen.getByLabelText(/Samantha/)).not.toBeChecked();
     expect(updateProjectSettings).not.toHaveBeenCalled();
+  });
+
+  // The badge read the channel list alone, so a project that had been given its
+  // own schedule or its own wording still announced itself as following the
+  // application — the one place the user looks to see that a change took.
+  it('stops saying Default once any setting is the project’s own', async () => {
+    await open({ post_type: 'schedule', per_day: 2 });
+
+    expect(screen.getByText('2 chosen', { selector: '.status-badge' })).toBeDefined();
   });
 
   it('gives the project its own list the first time a channel is ticked', async () => {
@@ -76,7 +89,7 @@ describe('PostizPanel', () => {
   it('lets a project that chose its own channels follow the default again', async () => {
     await open({ channels: ['chan-dc'], post_type: null, channel_settings: {} });
 
-    expect(screen.getByText('1 chosen')).toBeDefined();
+    expect(screen.getByText('1 channel')).toBeDefined();
     fireEvent.click(screen.getByRole('button', { name: /Follow Settings again/ }));
 
     await waitFor(() =>
@@ -150,6 +163,60 @@ describe('PostizPanel', () => {
 
     await waitFor(() =>
       expect(updateProjectSettings).toHaveBeenCalledWith('p1', { postiz: { per_day: null } })
+    );
+  });
+
+  // The rest of the calendar, asked exactly as the YouTube panel asks it. A
+  // project that can say "two a day" but not "starting Monday, between seven
+  // and eleven" sends one set of clips out on two calendars.
+  it('gives the project its own first day', async () => {
+    await open();
+
+    fireEvent.change(screen.getByLabelText(/First post lands on/), {
+      target: { value: '2026-09-01' },
+    });
+
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', {
+        postiz: { start_date: '2026-09-01' },
+      })
+    );
+  });
+
+  it('sends the first day back to the application default when it is cleared', async () => {
+    await open({ start_date: '2026-09-01' });
+    const date = screen.getByLabelText(/First post lands on/);
+
+    // Cleared, then left: a date input reads empty half-typed too, so the
+    // empty is only an answer once the user is out of the field.
+    fireEvent.change(date, { target: { value: '' } });
+    fireEvent.blur(date);
+
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', { postiz: { start_date: null } })
+    );
+  });
+
+  it('gives the project its own hours of the day', async () => {
+    await open();
+
+    expect((screen.getByLabelText(/From/) as HTMLSelectElement).value).toBe('');
+    fireEvent.change(screen.getByLabelText(/From/), { target: { value: '7' } });
+
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', { postiz: { day_start_hour: 7 } })
+    );
+  });
+
+  // Midnight is an hour, not an absent answer: a control that stored null for
+  // it would put a project back on the default it was trying to leave.
+  it('tells midnight apart from following the application', async () => {
+    await open();
+
+    fireEvent.change(screen.getByLabelText(/^to$/), { target: { value: '0' } });
+
+    await waitFor(() =>
+      expect(updateProjectSettings).toHaveBeenCalledWith('p1', { postiz: { day_end_hour: 0 } })
     );
   });
 

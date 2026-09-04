@@ -13,6 +13,12 @@ import {
   hourLabel,
   latestScheduleDate,
 } from '../utils/uploadSchedule';
+import {
+  MAX_HIGHLIGHT_CLIPS,
+  MAX_HIGHLIGHT_DURATION,
+  SHIPPED_HIGHLIGHT_DEFAULTS,
+  type HighlightNumberField,
+} from '../utils/highlightOptions';
 
 /** Fields that mean something in a Postiz post and nothing in a description. */
 const POSTIZ_FIELDS = [
@@ -187,6 +193,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
   const settings = data?.settings || { gemini_api_key: '', youtube_client_secrets: null, theme: 'light' as const, video_defaults: { resolution: 'keep original', aspect_ratio: 'keep original' } };
   const pipelineConfig = data?.pipeline_config || { execution_order: [], steps: {} };
 
+  // Both of these arrive by being promoted from a project rather than by being
+  // typed here, so this page reports them rather than offering the whole form
+  // twice: a caption adjustment and a title look are judged against real clips.
+  const captionOverrideCount = Object.keys(data?.settings?.caption_defaults?.overrides ?? {}).length;
+  const overlayDefaults = data?.settings?.overlay_defaults || null;
+
   // Which channels an import files against, and how it is changed. Saved on the
   // click rather than behind a Save button: it is one boolean per channel, and
   // every other control on this page saves itself too.
@@ -219,6 +231,66 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
     border: 'var(--border)',
     fontFamily: 'inherit',
     width: '100%',
+  };
+
+  // What every highlights run asks for unless a project says otherwise. Stored
+  // as one key, so each field writes the whole object back with its own value
+  // changed rather than replacing the others with nothing.
+  const highlightDefaults = settings.highlight_defaults ?? {};
+
+  /**
+   * One number of the highlights range, saved when the field is left.
+   *
+   * Empty means "whatever the app ships with" and is stored by dropping the
+   * key, not by writing zero: a run told to return between zero and zero clips
+   * is not a setting anybody meant to type. A value out of range is ignored,
+   * because the backend would ignore it too and the field would then show a
+   * number nothing is using.
+   */
+  const highlightNumberField = (
+    field: HighlightNumberField,
+    label: string,
+    max: number,
+    unit: string
+  ) => {
+    const stored = highlightDefaults[field];
+    const commit = (raw: string) => {
+      const text = raw.trim();
+      const next = { ...highlightDefaults };
+      if (text === '') {
+        if (stored === undefined) return;
+        delete next[field];
+      } else {
+        const value = Number(text);
+        if (!Number.isFinite(value) || value < 1 || value > max) return;
+        if (stored === value) return;
+        next[field] = value;
+      }
+      saveSettings({ settings: { highlight_defaults: next } });
+    };
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', flex: 1 }}>
+        <label htmlFor={`highlight-${field}`} style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>
+          {label}:
+        </label>
+        <input
+          id={`highlight-${field}`}
+          type="number"
+          min={1}
+          max={max}
+          // Keyed by the stored value, so clearing the field and leaving it
+          // shows the shipped default again rather than the text just deleted.
+          key={`highlight-${field}-${String(stored)}`}
+          defaultValue={stored === undefined ? '' : String(stored)}
+          placeholder={String(SHIPPED_HIGHLIGHT_DEFAULTS[field])}
+          onBlur={(e) => commit(e.target.value)}
+          style={inputStyle}
+        />
+        <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+          Empty is {SHIPPED_HIGHLIGHT_DEFAULTS[field]}{unit}, what the prompt ships with.
+        </span>
+      </div>
+    );
   };
 
   return (
@@ -387,7 +459,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
             ask; this is the one-time consent that lets it publish. */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)', border: 'var(--border)', padding: 'var(--space-sm)' }}>
           <label style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>YouTube Channel:</label>
-          <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>
+          {/* A channel that was connected and has since been refused reads as an
+              error, not as a neutral "not connected": nothing on this page
+              changed, the uploads simply stopped working, and the sentence
+              saying so has to look like the problem it is. */}
+          <span
+            style={
+              youtube && !youtube.connected && youtube.expired
+                ? { fontSize: '0.8rem', color: 'var(--error)', fontWeight: 'bold' }
+                : { fontSize: '0.8rem', opacity: 0.8 }
+            }
+          >
             {youtube?.connected
               ? `Connected${youtube.account ? ` as ${youtube.account}` : ''}`
               : (youtube?.reason || 'No channel connected.')}
@@ -530,7 +612,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
               <span style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Spread between:</span>
-              <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
+              {/* Grouped and named. "From" and "to" say which end of the window
+                  a select is, and nothing about which schedule it belongs to —
+                  and this page now carries two of these, one per platform. */}
+              <div
+                role="group"
+                aria-label="Hours YouTube clips go public between"
+                style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}
+              >
                 <label htmlFor="youtube-day-start" style={{ fontSize: '0.8rem' }}>From</label>
                 <select
                   id="youtube-day-start"
@@ -648,6 +737,29 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
           </select>
         </div>
 
+        {/* The calendar an import files against, asked in the same words and
+            the same order as the YouTube one above: the two publish one set of
+            clips, and a user comparing them should be comparing answers rather
+            than working out whether the questions match. Asked whatever an
+            import makes, because a draft has a date too — it is where it sits
+            on the calendar the user is about to look at. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+          <label htmlFor="postiz-start-date" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>First post lands on:</label>
+          <DateField
+            id="postiz-start-date"
+            value={settings.postiz_schedule_start_date || ''}
+            onCommit={(value) => saveSettings({ settings: { postiz_schedule_start_date: value } })}
+            min={earliestScheduleDate()}
+            max={latestScheduleDate()}
+            style={inputStyle}
+          />
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            Empty starts as soon as a post may be placed, which is an hour ahead of the import —
+            near enough to be today's calendar, far enough to still be cancellable. Today at the
+            earliest, and at most {MAX_SCHEDULE_YEARS_AHEAD} years out.
+          </span>
+        </div>
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
           <label htmlFor="postiz-per-day" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>How many land per day:</label>
           <select
@@ -656,19 +768,48 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
             onChange={(e) => saveSettings({ settings: { postiz_per_day: Number(e.target.value) } })}
             style={inputStyle}
           >
-            {/* Zero first because it is the default and what an import did
-                before there was a choice. */}
-            <option value="0">All on the same day</option>
-            <option value="1">1 per day</option>
-            <option value="2">2 per day</option>
-            <option value="3">3 per day</option>
-            <option value="4">4 per day</option>
-            <option value="6">6 per day</option>
+            {PER_DAY_CHOICES.map((choice) => (
+              <option key={choice.value} value={choice.value}>{choice.label}</option>
+            ))}
           </select>
           <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
             A clip keeps its slot however it was imported, so re-importing one moves nothing.
-            Posts are spread between {settings.postiz_day_start_hour ?? 9}:00 and{' '}
-            {settings.postiz_day_end_hour ?? 21}:00.
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+          <span style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Spread between:</span>
+          <div
+            role="group"
+            aria-label="Hours Postiz posts land between"
+            style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}
+          >
+            <label htmlFor="postiz-day-start" style={{ fontSize: '0.8rem' }}>From</label>
+            <select
+              id="postiz-day-start"
+              value={String(settings.postiz_day_start_hour ?? 9)}
+              onChange={(e) => saveSettings({ settings: { postiz_day_start_hour: Number(e.target.value) } })}
+              style={{ ...inputStyle, width: 'auto' }}
+            >
+              {HOURS.map((hour) => (
+                <option key={hour} value={hour}>{hourLabel(hour)}</option>
+              ))}
+            </select>
+            <label htmlFor="postiz-day-end" style={{ fontSize: '0.8rem' }}>to</label>
+            <select
+              id="postiz-day-end"
+              value={String(settings.postiz_day_end_hour ?? 21)}
+              onChange={(e) => saveSettings({ settings: { postiz_day_end_hour: Number(e.target.value) } })}
+              style={{ ...inputStyle, width: 'auto' }}
+            >
+              {HOURS.map((hour) => (
+                <option key={hour} value={hour}>{hourLabel(hour)}</option>
+              ))}
+            </select>
+          </div>
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            On this machine's clock. One post a day goes out at the first hour; the rest of a day's
+            posts are spaced evenly up to the last.
           </span>
         </div>
 
@@ -889,6 +1030,117 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, setTheme }) =
               <option key={name} value={name}>{preset.label}</option>
             ))}
           </select>
+          {captionOverrideCount > 0 && (
+            <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+              {captionOverrideCount} adjustment{captionOverrideCount === 1 ? '' : 's'} on top of the
+              preset, promoted from a project.{' '}
+              <button
+                type="button"
+                className="text-action"
+                onClick={() => saveSettings({
+                  settings: { caption_defaults: { ...settings.caption_defaults, overrides: {} } },
+                })}
+              >
+                Back to the plain preset
+              </button>
+            </span>
+          )}
+        </div>
+
+        {/* Set from a project rather than here: a title look is judged against
+            real clips, and a project's Overlay titles dialog is where it is
+            settled and promoted from. This says what was promoted, and offers
+            the only thing this page can usefully do to it. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+          <label style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Overlay titles on new projects:</label>
+          <span style={{ fontSize: '0.9rem' }}>
+            {overlayDefaults
+              ? `${overlayDefaults.enabled ? 'Burned into clips' : 'Thumbnails only'} · ${overlayDefaults.font_family ?? 'default font'} · ${overlayDefaults.font_size_pct ?? '—'}% of frame · ${overlayDefaults.position_pct ?? '—'}% from top`
+              : 'Not set — new projects start with titles off, drawn on the thumbnails only.'}
+          </span>
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            Set this from a project: open <strong>Overlay titles</strong> in its settings, style it
+            there, then save it as the application default.
+            {overlayDefaults && (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  className="text-action"
+                  onClick={() => saveSettings({ settings: { overlay_defaults: null } })}
+                >
+                  Clear
+                </button>
+              </>
+            )}
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+          <label htmlFor="clip-preview-default" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>Card preview on new projects:</label>
+          <select
+            id="clip-preview-default"
+            value={settings.clip_preview_default === 'video' ? 'video' : 'thumbnail'}
+            onChange={(e) => updateMutation.mutate({
+              settings: { clip_preview_default: e.target.value },
+            })}
+            style={inputStyle}
+          >
+            <option value="thumbnail">Thumbnail</option>
+            <option value="video">Video frame</option>
+          </select>
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            What a clip card shows while it sits still. Each project can change its own.
+          </span>
+        </div>
+      </section>
+
+      {/* Highlights Section. Read when the step runs rather than copied into a
+          project at creation, so a change here moves every project that has not
+          answered for itself — on its next run, never on highlights already
+          found. */}
+      <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+        <h2 style={{ margin: 0, fontSize: '1.2rem', textTransform: 'uppercase', fontWeight: 900 }}>Highlights</h2>
+        <p style={{ fontSize: '0.9rem', opacity: 0.8, margin: 0 }}>
+          What a highlights run asks for: how many segments it returns, and how long one may be.
+          These are hard limits the model rejects against, not preferences. A project can disagree
+          with any of them in its own settings.
+        </p>
+
+        <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+          {highlightNumberField('min_clips', 'Fewest clips', MAX_HIGHLIGHT_CLIPS, '')}
+          {highlightNumberField('max_clips', 'Most clips', MAX_HIGHLIGHT_CLIPS, '')}
+        </div>
+
+        <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+          {highlightNumberField('min_duration', 'Shortest clip (seconds)', MAX_HIGHLIGHT_DURATION, 's')}
+          {highlightNumberField('max_duration', 'Longest clip (seconds)', MAX_HIGHLIGHT_DURATION, 's')}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+          <label htmlFor="highlight-guidance" style={{ fontWeight: 'bold', textTransform: 'uppercase', fontSize: '0.9rem' }}>
+            What counts as a highlight:
+          </label>
+          <textarea
+            id="highlight-guidance"
+            // Written when the field is left rather than per keystroke: this is
+            // a sentence typed once, not a control being dragged.
+            key={`highlight-guidance-${highlightDefaults.guidance ?? ''}`}
+            defaultValue={highlightDefaults.guidance ?? ''}
+            onBlur={(e) => {
+              const next = e.target.value;
+              if (next === (highlightDefaults.guidance ?? '')) return;
+              saveSettings({
+                settings: { highlight_defaults: { ...highlightDefaults, guidance: next } },
+              });
+            }}
+            placeholder="e.g. prefer strong opinions over stories, and never open on a question"
+            style={{ ...inputStyle, minHeight: '110px', lineHeight: 1.4 }}
+          />
+          <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>
+            Added to the prompt as standing instructions. They outrank its own preferences but not
+            its rules — the loop test, the verbatim text and the timings still hold.
+          </span>
         </div>
       </section>
 

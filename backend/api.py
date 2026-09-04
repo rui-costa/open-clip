@@ -14,6 +14,7 @@ from backend.src.dataclasses.data import (
     CLIP_PREVIEW_CHOICES,
     CaptionSettings,
     DescriptionSettings,
+    HighlightSettings,
     OverlayText,
     PostizSettings,
     Project,
@@ -900,13 +901,33 @@ class SimpleHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get('Content-Length', 0))
         data = json.loads(self.rfile.read(content_length))
         project = Project()
-        project.settings.resolution = data.get('resolution', 'keep original')
-        project.settings.aspect_ratio = data.get('aspectRatio', 'keep original')
+        # Not asked for at creation. Both are visible in the previews and
+        # changeable in Project settings at any point, so making the upload
+        # screen ask for them only forced a decision before there was anything
+        # to look at. Like every other default here, the value is copied once:
+        # a project already reviewed must not re-frame itself because the
+        # application default moved.
+        video_defaults = settings_manager.get('video_defaults') or {}
+        project.settings.resolution = video_defaults.get('resolution') or 'keep original'
+        project.settings.aspect_ratio = video_defaults.get('aspect_ratio') or 'keep original'
         # Captions start from the global default, then become the project's own:
         # changing the default later must not re-style clips already reviewed.
         project.settings.captions = CaptionSettings.from_dict(
             data.get('captions') or settings_manager.get('caption_defaults') or {}
         )
+        # The title look starts from the global default for the same reason, and
+        # is held wordless for the same reason the project setting is: a line
+        # stored here would be one line over every clip of every project.
+        project.settings.overlay = OverlayText.from_dict({
+            **(settings_manager.get('overlay_defaults') or {}),
+            "text": "",
+        })
+        # Anything else — a key from a later version, a typo typed into the
+        # settings file — leaves the project on the shipped default rather than
+        # reaching the page as a state it cannot draw.
+        preview = settings_manager.get('clip_preview_default')
+        if preview in CLIP_PREVIEW_CHOICES:
+            project.settings.clip_preview = preview
         project.save()
         self.send_json_response({"project_id": project.project_id})
 
@@ -1088,6 +1109,47 @@ class SimpleHandler(BaseHTTPRequestHandler):
             logger.exception("Failed to update clip overlay")
             self.send_cors_error(500, f"Failed to update overlay text: {str(e)}")
 
+    def handle_put_clip_trim(self):
+        """One clip's window: where in the source it starts and where it ends.
+
+        The whole window is sent rather than a nudge, because the editor holds
+        both numbers and the user watches them while adjusting. Saving moves the
+        highlight only — the cut file, if there is one, still holds the old
+        window until the clip is rendered again, which is what the stamp coming
+        back is for.
+        """
+        parts = urlparse(self.path).path.split('/')
+        try:
+            project_id, clip_index = parts[2], int(parts[4])
+        except (IndexError, ValueError):
+            self.send_cors_error(404, "No clip at that index")
+            return
+
+        content_length = int(self.headers.get('Content-Length', 0))
+        data = json.loads(self.rfile.read(content_length)) if content_length else {}
+        try:
+            project = Project(project_id)
+            trimmed = project.trim_highlight(clip_index, data.get('start'), data.get('end'))
+            self.send_json_response({
+                "status": "success",
+                # Sent back as stored, so the editor shows the window that will
+                # actually be cut rather than the one it asked for.
+                "start": trimmed.get("start"),
+                "end": trimmed.get("end"),
+                "trimmed_at": trimmed.get("trimmed_at"),
+            })
+        except FileNotFoundError:
+            self.send_cors_error(404, "Project not found")
+        except IndexError:
+            self.send_cors_error(404, f"No clip at index {clip_index}")
+        except ValueError as e:
+            # The one error the user can fix from where they are standing, so it
+            # is their sentence rather than a 500 and a log line.
+            self.send_cors_error(400, str(e))
+        except Exception as e:
+            logger.exception("Failed to trim clip")
+            self.send_cors_error(500, f"Failed to save the trim: {str(e)}")
+
     def handle_put_project_settings(self):
         parts = self.path.split('/')
         project_id = parts[2]
@@ -1113,6 +1175,14 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 project.settings.description = DescriptionSettings.from_dict({
                     **project.settings.description.to_dict(),
                     **(data['description'] or {}),
+                })
+            if 'highlights' in data:
+                # Merged like the description, and an explicit null survives it:
+                # null is how "follow the application settings" is stored, so a
+                # number cleared back to it has to reach the settings object.
+                project.settings.highlights = HighlightSettings.from_dict({
+                    **project.settings.highlights.to_dict(),
+                    **(data['highlights'] or {}),
                 })
             if 'postiz' in data:
                 # Merged, like the description: the panel saves one field at a
@@ -1202,6 +1272,8 @@ class SimpleHandler(BaseHTTPRequestHandler):
             self.handle_put_clip_overlay()
         elif path.startswith('/project/') and path.endswith('/thumbnail'):
             self.handle_put_clip_thumbnail()
+        elif path.startswith('/project/') and path.endswith('/trim'):
+            self.handle_put_clip_trim()
         elif path.startswith('/project/') and path.endswith('/settings'):
             self.handle_put_project_settings()
         else:

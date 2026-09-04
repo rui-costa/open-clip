@@ -2,6 +2,7 @@ import React, { useEffect, useId, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../Modal';
 import { DescriptionFieldHelp } from '../DescriptionFieldHelp';
+import { PromoteToDefaults } from '../PromoteToDefaults';
 import { updateProjectSettings, type DescriptionSettings } from '../../api';
 
 interface DescriptionPanelProps {
@@ -172,6 +173,29 @@ export const DescriptionPanel: React.FC<DescriptionPanelProps> = ({ projectId, s
             Could not save that. Uploads would use the last saved description, not this one.
           </p>
         )}
+
+        {/* Only the two fields that could belong to any project. The URL and
+            the title name one episode, and promoting them would put this
+            project's source link under every other project's shorts.
+
+            Built from the draft rather than from what is stored: leaving a box
+            saves it, but the metadata has not come back by the time the click
+            lands, and promoting the previous text is the one mistake this
+            control cannot let the user make quietly. */}
+        <PromoteToDefaults
+          build={(app) => {
+            if (!draft.text && !draft.template) return {};
+            return {
+              description_defaults: {
+                ...(app.description_defaults ?? {}),
+                ...(draft.text ? { text: draft.text } : {}),
+                ...(draft.template ? { template: draft.template } : {}),
+              },
+            };
+          }}
+          hint="The project text and template become the ones every project uses. These are read when a clip is uploaded, so existing projects change too — except any that wrote their own. The link back to the original video stays here."
+          emptyHint="Only the project text and the template can belong to every project, and this project has neither. The URL and title name one episode."
+        />
       </Modal>
     </>
   );

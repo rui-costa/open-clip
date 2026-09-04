@@ -14,7 +14,7 @@ import {
   type ProjectMetadata,
   type StepActivity,
 } from '../../api';
-import { targetAspectRatio } from '../../utils/aspectRatio';
+import { matchesOutputSettings, targetAspectRatio } from '../../utils/aspectRatio';
 import { stepLabel } from '../../utils/stepLabels';
 
 /**
@@ -159,6 +159,14 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
         // A re-cut clip keeps its filename, so the card needs this to stop
         // playing the copy the browser already has.
         renderedAt: h.rendered_at ?? null,
+        // A trim moves the window without touching the file, so the card needs
+        // both stamps to say whether the cut still matches its own timecodes.
+        trimmedAt: h.trimmed_at ?? null,
+        // Changing the project's aspect ratio re-shapes the preview and re-cuts
+        // nothing, so a card whose file was made for the old shape has to go
+        // back to previewing from the source rather than present the old crop
+        // as the finished clip.
+        outputStale: !matchesOutputSettings(displayMetadata.settings, h),
         // A published clip is not republished by accident: the card says it is
         // live, and its upload button asks before adding a second video.
         youtubeUrl: h.youtube_url ?? null,
@@ -184,7 +192,9 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ metadata, pipeline
         // string. `any` on this map hid the mismatch.
         text: h.highlight_text ?? '',
       })),
-    [displayMetadata.highlights]
+    // The output settings are read per clip here, so a change to them has to
+    // rebuild this list — that is the whole point of `outputStale`.
+    [displayMetadata.highlights, displayMetadata.settings]
   );
 
   // Memoised for the same reason `clips` is: this page rebuilds twice a second

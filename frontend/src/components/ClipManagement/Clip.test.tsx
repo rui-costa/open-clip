@@ -186,6 +186,45 @@ describe('Clip Component', () => {
     expect(screen.getByText('0:01–1:05')).toBeDefined();
   });
 
+  // Changing the project's aspect ratio re-shapes the preview and re-cuts
+  // nothing, so the file on disk was cut for a frame that is no longer on
+  // screen. Played inside the new one it is a crop the clipper will never
+  // produce, presented as the finished clip.
+  it('previews from the source again once the output settings have moved on', () => {
+    renderClip({ ...renderedClip, outputStale: true });
+
+    expect(document.querySelector('video')?.getAttribute('src')).toBe(SOURCE_URL);
+    // And says so, rather than letting the wrong crop pass for the render.
+    expect(screen.getByText('Preview')).toBeDefined();
+    expect(
+      screen.getByLabelText('Re-render this clip; the output settings changed after it was cut')
+    ).toBeDefined();
+  });
+
+  // A project whose original video has gone has no window to preview, so the
+  // old cut is the only picture there is.
+  it('keeps playing a stale cut when there is no source left to preview', () => {
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <Clip
+            projectId="test-project-123"
+            clip={{ ...renderedClip, outputStale: true }}
+            sourceUrl={null}
+            aspectRatio={null}
+            onDelete={() => {}}
+            playingClipIndex={null}
+            setPlayingClipIndex={() => {}}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(document.querySelector('video')?.getAttribute('src')).toBe(
+      'http://localhost:8000/projects/static/test-project-123/clips/clip_000.mp4'
+    );
+  });
+
   it('boxes the preview to the ratio the clipper would render at', () => {
     renderClip(previewClip, 9 / 16);
 

@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { PongGame } from './PongGame';
 
 import { getSpinnerVerb } from '../utils/spinnerVerbs';
-import { getSettings, getResolutions, getAspectRatios, type SettingsResponse } from '../api';
 
 // ... (remove UPLOAD_VERBS and PROCESSING_VERBS arrays)
 
@@ -10,7 +9,13 @@ interface FileUploaderProps {
   onFileSelect: (file: File) => void;
   isPending: boolean;
   uploadProgress: number;
-  onSubmit: (resolution: string, aspectRatio: string) => void;
+  /**
+   * Creates the project from the chosen file alone. Resolution and aspect
+   * ratio are not asked for here: the project starts on the application
+   * defaults, and both are changed in Project settings against the clip
+   * previews, which is where you can actually see what the choice does.
+   */
+  onSubmit: () => void;
 }
 
 export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPending, uploadProgress, onSubmit }) => {
@@ -19,24 +24,6 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
   const [spinnerVerb, setSpinnerVerb] = useState(getSpinnerVerb());
   const [showGame, setShowGame] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [resolution, setResolution] = useState('keep original');
-  const [aspectRatio, setAspectRatio] = useState('keep original');
-  const [availableResolutions, setAvailableResolutions] = useState<string[]>(['keep original']);
-  const [availableAspectRatios, setAvailableAspectRatios] = useState<string[]>(['keep original']);
-
-  useEffect(() => {
-    Promise.all([getSettings(), getResolutions(), getAspectRatios()])
-      .then(([settingsData, resolutions, aspectRatios]) => {
-        const defaults = (settingsData as SettingsResponse).settings?.video_defaults;
-        if (defaults) {
-          setResolution(defaults.resolution);
-          setAspectRatio(defaults.aspect_ratio);
-        }
-        setAvailableResolutions(['keep original', ...resolutions]);
-        setAvailableAspectRatios(['keep original', ...aspectRatios]);
-      })
-      .catch(err => console.error('Failed to fetch config, using defaults', err));
-  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -216,25 +203,15 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, isPend
             <span style={{ fontSize: '0.8rem', fontWeight: 900, textTransform: 'uppercase' }}>Selected File</span>
             <h3 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900 }}>{file.name}</h3>
           </div>
-          <div style={{ display: 'flex', gap: 'var(--space-md)', fontSize: '0.9rem', fontWeight: 'bold' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'left' }}>
-              <label>Resolution:</label>
-              <select value={resolution} onChange={(e) => { e.stopPropagation(); setResolution(e.target.value); }} style={{ padding: '4px' }}>
-                {availableResolutions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'left' }}>
-              <label>Aspect Ratio:</label>
-              <select value={aspectRatio} onChange={(e) => { e.stopPropagation(); setAspectRatio(e.target.value); }} style={{ padding: '4px' }}>
-                {availableAspectRatios.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
-            </div>
-          </div>
+          <p style={{ margin: 0, maxWidth: '420px', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+            Resolution and aspect ratio are set in <strong>Project settings</strong>, where
+            the clip previews show what you are choosing. You can change them at any time.
+          </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-sm)' }}>
-            <button 
-              disabled={isPending} 
-              onClick={(e) => { e.stopPropagation(); onSubmit(resolution, aspectRatio); }}
+            <button
+              disabled={isPending}
+              onClick={(e) => { e.stopPropagation(); onSubmit(); }}
               style={{ fontSize: '1.5rem', padding: 'var(--space-md) var(--space-xl)' }}
             >
               CREATE PROJECT

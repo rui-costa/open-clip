@@ -10,6 +10,12 @@ interface ClipRaw {
   isRendered: boolean;
   captionsBurned?: boolean;
   overlayBurned?: boolean;
+  /** When the file was last cut, and when the window was last moved. A trim
+   *  cuts nothing, so the second being later means the file is behind. */
+  renderedAt?: string | null;
+  trimmedAt?: string | null;
+  /** True when the file was cut to output settings the project no longer has. */
+  outputStale?: boolean;
   /** Where this clip already lives on YouTube, once it has been published. */
   youtubeUrl?: string | null;
   youtubeVideoId?: string | null;

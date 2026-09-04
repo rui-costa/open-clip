@@ -35,6 +35,32 @@ const highlight = (text: string) => ({
   video_description_for_linkedin: 'linkedin',
 });
 
+// The prompt copies the one video summary onto every title, and points at its
+// best titles by index.
+const videoMetadata = {
+  components: [
+    {
+      index: 0,
+      title: 'A clickable title',
+      summary: 'What the video is about.',
+      post_for_x: 'x post',
+      post_for_reddit: 'reddit post',
+      post_for_linkedin: 'linkedin post',
+      reason: 'Highest curiosity gap.',
+    },
+    {
+      index: 1,
+      title: 'Another title',
+      summary: 'What the video is about.',
+      post_for_x: '',
+      post_for_reddit: '',
+      post_for_linkedin: '',
+      reason: '',
+    },
+  ],
+  top_recommendations: [{ index: 0, reason: 'Highest curiosity gap.' }],
+};
+
 const metadata = (highlights: unknown[] = [{ start: 0, end: 1 }]): ProjectMetadata => ({
   project_id: 'p1',
   name: 'Test Project',
@@ -184,43 +210,49 @@ describe('ProjectActions', () => {
 
   describe('writing', () => {
     it('keeps the writing behind its trigger', () => {
-      renderActions({ metadata: metadata([highlight('one')]) });
+      renderActions({ metadata: { ...metadata([highlight('one')]), video_metadata: videoMetadata } });
 
-      expect(screen.queryByText(/Content Highlights/i)).toBeNull();
+      expect(screen.queryByText(/Video writing/i)).toBeNull();
 
       const trigger = screen.getByRole('button', { name: /^Writing$/i });
       fireEvent.click(trigger);
 
-      expect(screen.getByText(/Content Highlights/i)).toBeDefined();
+      expect(screen.getByText(/Video writing/i)).toBeDefined();
       expect(trigger.getAttribute('aria-expanded')).toBe('true');
     });
 
-    // A re-run can return fewer highlights than the last one, leaving the index
-    // pointing past the end of the new list.
-    it('survives a re-run that returns fewer highlights than are paged past', () => {
-      const { rerender } = renderActions({
-        metadata: metadata([highlight('one'), highlight('two'), highlight('three')]),
-      });
+    // The project's own title and description had nowhere to be read: the
+    // backend has been sending them since the Metadata step was written.
+    it('shows the titles and the description the metadata step wrote', () => {
+      renderActions({ metadata: { ...metadata([highlight('one')]), video_metadata: videoMetadata } });
 
       fireEvent.click(screen.getByRole('button', { name: /^Writing$/i }));
-      fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
-      fireEvent.click(screen.getByRole('button', { name: /^Next$/i }));
-      expect(screen.getByText('3 / 3')).toBeDefined();
 
-      rerender(
-        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-          <ProjectActions
-            metadata={metadata([highlight('only one left')])}
-            pipelineConfig={pipelineConfig}
-            activeProcesses={[]}
-            onExecuteAction={vi.fn()}
-            onDeleteProject={vi.fn()}
-          />
-        </QueryClientProvider>
-      );
+      expect(screen.getByText('What the video is about.')).toBeDefined();
+      expect(screen.getByText('A clickable title')).toBeDefined();
+      expect(screen.getByText('Another title')).toBeDefined();
+      expect(screen.getByText('Top pick')).toBeDefined();
+      expect(screen.getByText('Highest curiosity gap.')).toBeDefined();
+    });
 
-      expect(screen.getByText('1 / 1')).toBeDefined();
-      expect(screen.getByText('"only one left"')).toBeDefined();
+    // A highlight's hook, quote and social posts belong to one clip and are
+    // already on that clip.
+    it('leaves the highlights out of it', () => {
+      renderActions({ metadata: { ...metadata([highlight('one')]), video_metadata: videoMetadata } });
+
+      fireEvent.click(screen.getByRole('button', { name: /^Writing$/i }));
+
+      expect(screen.queryByText(/one hook/i)).toBeNull();
+      expect(screen.queryByRole('button', { name: /^Next$/i })).toBeNull();
+    });
+
+    // An empty panel should say which step fills it, not just that it is empty.
+    it('names the step that fills it before that step has run', () => {
+      renderActions({ metadata: metadata([highlight('one')]) });
+
+      fireEvent.click(screen.getByRole('button', { name: /^Writing$/i }));
+
+      expect(screen.getByText(/Run the Metadata step/i)).toBeDefined();
     });
   });
 

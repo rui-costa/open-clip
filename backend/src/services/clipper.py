@@ -127,6 +127,12 @@ class Clipper:
         # The filename is the same on every render, so this is what tells a
         # browser holding the old file that there is a new one.
         highlight.rendered_at = datetime.now().isoformat()
+        # What this file was shaped to. The project's aspect ratio and
+        # resolution can be changed afterwards, and nothing re-cuts the clips
+        # when they are, so this is how the page tells a file that still matches
+        # the settings from one that only used to.
+        highlight.rendered_aspect_ratio = project.settings.aspect_ratio
+        highlight.rendered_resolution = project.settings.resolution
         project.set_property("highlights", project.highlights)
         return filename
 

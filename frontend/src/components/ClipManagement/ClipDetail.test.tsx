@@ -412,6 +412,28 @@ describe('ClipDetail Component', () => {
     expect(video.loop).toBe(true);
   });
 
+  // Changing the project's ratio re-shapes this player and re-cuts nothing, so
+  // the file made under the old ratio would play inside a frame it was never
+  // cut for — a crop the clipper will not produce, shown as the finished clip.
+  it('goes back to the source once the file no longer matches the output settings', async () => {
+    vi.mocked(getProjectMetadata).mockResolvedValue(
+      project([
+        highlight({
+          viral_hook_text: 'FIRST CUT',
+          is_clip_generated: true,
+          generated_clip_filename: 'first.mp4',
+          rendered_aspect_ratio: '16:9',
+          rendered_resolution: 'keep original',
+        }),
+      ])
+    );
+
+    renderDetail('0');
+
+    const video = (await screen.findByLabelText('FIRST CUT')) as HTMLVideoElement;
+    expect(video.getAttribute('src')).toBe('/static/test-project/original.mp4');
+  });
+
   // The related-video chip has no field in the Data API, so the upload cannot
   // attach it and the page has to hand over the one place that can.
   it('points a published clip at its Studio page, where the related video is set', async () => {

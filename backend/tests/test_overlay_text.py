@@ -404,6 +404,27 @@ class TestSingleClipRender:
         assert stored.overlay_burned is True
         # What busts a browser cache holding the previous cut of the same name.
         assert stored.rendered_at is not None
+        # And the shape it was cut to, so the page can tell a file that still
+        # matches the project's output settings from one that only used to.
+        assert stored.rendered_aspect_ratio == "9:16"
+        assert stored.rendered_resolution == "1080p"
+
+    def test_a_cut_records_the_settings_it_was_made_under(self, project_root, monkeypatch):
+        """A clip re-cut after the ratio changed records the new ratio.
+
+        The recorded pair is what the project page compares against, so a
+        re-render has to clear the staleness it was pressed to fix.
+        """
+        project = self._project_with_two_clips(project_root)
+        monkeypatch.setattr("backend.src.services.clipper.OpenCVVideoEngine", lambda path: FakeEngine())
+        clipper = Clipper()
+        clipper.render_one(project, 0)
+
+        project.settings.aspect_ratio = "1:1"
+        project.set_property("settings", project.settings)
+        clipper.render_one(Project(PROJECT_ID), 0)
+
+        assert Project(PROJECT_ID).highlights[0].rendered_aspect_ratio == "1:1"
 
     def test_a_clip_with_no_title_burns_none(self, project_root, monkeypatch):
         project = self._project_with_two_clips(project_root)

@@ -429,3 +429,131 @@ class TestPreview:
         assert payload["title_font"]["height_ratio"] > 0
         assert payload["duration"] == 4.0
         assert payload["settings"]["show_captions"] is False
+
+
+def write_clips_project(root: Path, count: int, thumbnails=None):
+    """A project of `count` clips, for the step that draws all of them."""
+    project_dir = root / "projects" / PROJECT_ID
+    project_dir.mkdir(parents=True, exist_ok=True)
+    highlights = []
+    for index in range(count):
+        highlight = {
+            "highlight_text": f"clip {index}", "viral_hook_text": f"hook {index}",
+            "thumbnail_text": "", "video_description_for_x": "",
+            "video_description_for_reddit": "", "video_description_for_linkedin": "",
+            "video_title_for_youtube_short": f"Title {index}",
+            "start": 10.0 * index, "end": 10.0 * index + 4.0,
+        }
+        if thumbnails and thumbnails.get(index) is not None:
+            highlight["thumbnail"] = thumbnails[index]
+        highlights.append(highlight)
+    (project_dir / "metadata.json").write_text(json.dumps({
+        "project_id": PROJECT_ID,
+        "name": "Thumbnail Project",
+        "created_at": datetime.now().isoformat(),
+        "files": {},
+        "highlights": highlights,
+        "video_metadata": {"components": [], "top_recommendations": []},
+        "settings": {"aspect_ratio": "9:16", "resolution": "1080p"},
+        "status": None,
+        "step_statuses": {},
+    }))
+    (project_dir / "original.mp4").write_bytes(b"")
+    return project_dir
+
+
+class FailingEngine(FakeEngine):
+    """Draws every frame except the ones it was told to refuse."""
+
+    def __init__(self, refuse):
+        super().__init__()
+        self.refuse = set(refuse)
+
+    def extract_frame(self, input_path, output_path, timestamp, aspect_ratio, resolution,
+                      subtitle_path=None, framing_timestamp=None):
+        if Path(output_path).name in self.refuse:
+            raise RuntimeError("ffmpeg fell over")
+        super().extract_frame(input_path, output_path, timestamp, aspect_ratio, resolution,
+                              subtitle_path=subtitle_path, framing_timestamp=framing_timestamp)
+
+
+class TestStep:
+    """Drawing every clip's still in one press, and re-drawing them all."""
+
+    def test_draws_one_still_per_clip(self, project_root):
+        write_clips_project(project_root, 3)
+        engine = FakeEngine()
+
+        Thumbnailer().execute(Project(PROJECT_ID), engine=engine)
+
+        assert len(engine.frames) == 3
+        directory = Path("projects", PROJECT_ID, "thumbnails")
+        assert sorted(path.name for path in directory.iterdir()) == [
+            "clip_000.jpg", "clip_001.jpg", "clip_002.jpg"
+        ]
+        assert Project(PROJECT_ID).step_statuses["thumbnails"] == "completed"
+
+    def test_a_second_press_redraws_the_stills_that_are_already_there(self, project_root):
+        # Unlike the clipper, this does not resume: the reason to press it is
+        # that the pictures on disk were drawn in an older look, and skipping
+        # the ones that exist would skip exactly the clips the run is for.
+        write_clips_project(project_root, 3)
+        Thumbnailer().execute(Project(PROJECT_ID), engine=FakeEngine())
+        engine = FakeEngine()
+
+        Thumbnailer().execute(Project(PROJECT_ID), engine=engine)
+
+        assert [Path(frame["output"]).name for frame in engine.frames] == [
+            "clip_000.jpg", "clip_001.jpg", "clip_002.jpg"
+        ]
+
+    def test_full_takes_the_stills_of_clips_that_are_gone_off_the_disk(self, project_root):
+        write_clips_project(project_root, 2)
+        Thumbnailer().execute(Project(PROJECT_ID), engine=FakeEngine())
+        # A still left behind by a highlight that no longer exists.
+        Path("projects", PROJECT_ID, "thumbnails", "clip_009.jpg").write_bytes(b"jpeg")
+
+        Thumbnailer().execute(Project(PROJECT_ID), full=True, engine=FakeEngine())
+
+        directory = Path("projects", PROJECT_ID, "thumbnails")
+        assert sorted(path.name for path in directory.iterdir()) == ["clip_000.jpg", "clip_001.jpg"]
+
+    def test_the_settings_survive_the_redraw(self, project_root):
+        # The frame the user picked is theirs. Only the render belongs to this
+        # step, so a redraw takes the same frame again.
+        write_clips_project(project_root, 1, thumbnails={0: {"frame_time": 2.5}})
+        engine = FakeEngine()
+
+        Thumbnailer().execute(Project(PROJECT_ID), full=True, engine=engine)
+
+        assert Project(PROJECT_ID).highlights[0].thumbnail.frame_time == 2.5
+        assert engine.frames[0]["timestamp"] == pytest.approx(2.5)
+
+    def test_one_still_that_will_not_draw_does_not_cost_the_others(self, project_root):
+        write_clips_project(project_root, 3)
+        engine = FailingEngine(refuse=["clip_001.jpg"])
+
+        Thumbnailer().execute(Project(PROJECT_ID), engine=engine)
+
+        project = Project(PROJECT_ID)
+        assert project.step_statuses["thumbnails"] == "partial"
+        assert "1 of 3 clips have no thumbnail" in project.step_errors["thumbnails"]
+        assert Path("projects", PROJECT_ID, "thumbnails", "clip_002.jpg").exists()
+
+    def test_a_run_that_drew_nothing_is_a_failure(self, project_root):
+        write_clips_project(project_root, 2)
+        engine = FailingEngine(refuse=["clip_000.jpg", "clip_001.jpg"])
+
+        Thumbnailer().execute(Project(PROJECT_ID), engine=engine)
+
+        project = Project(PROJECT_ID)
+        assert project.step_statuses["thumbnails"] == "error"
+        assert "ffmpeg fell over" in project.step_errors["thumbnails"]
+
+    def test_no_source_video_fails_the_step_rather_than_every_clip_in_it(self, project_root):
+        project_dir = write_clips_project(project_root, 2)
+        (project_dir / "original.mp4").unlink()
+
+        Thumbnailer().execute(Project(PROJECT_ID), engine=FakeEngine())
+
+        assert Project(PROJECT_ID).step_statuses["thumbnails"] == "error"

@@ -67,7 +67,14 @@ class PipelineOrchestrator:
             # the clipper takes a callback and never learns what Postiz is, and
             # the publisher decides for itself whether it is configured to act.
             "clipper": Clipper(on_clip_rendered=postiz.import_rendered),
-            "upload": Uploader(),
+            # The same object `generate_thumbnail` renders one still with. As a
+            # step it draws them all, which is the way to redraw a project after
+            # the overlay look changed.
+            "thumbnails": self.thumbnailer,
+            # The same thumbnailer the clip pages render stills with, so an
+            # upload's still is drawn by the one that has the caption service
+            # this orchestrator was given.
+            "upload": Uploader(thumbnailer=self.thumbnailer),
             "postiz": postiz,
         }
         for name, task in self.llm_tasks.items():
@@ -129,6 +136,33 @@ class PipelineOrchestrator:
 
             if project.step_statuses.get(step_name) == "error":
                 raise RuntimeError(f"Service {step_name} failed.")
+
+    def _record_step_failure(self, project_id: str, step_name: str, error: BaseException):
+        """Writes why a step stopped, when the step itself never got to say.
+
+        A service that fails a clip at a time records its own reason, and that
+        sentence is better than anything known here, so it is left alone. What
+        is left is the failure that escaped before any of that ran — an
+        authorisation that will not refresh, a source file that has been moved,
+        a bug — and until now it wrote nothing at all: the step stayed
+        "running" on disk with nobody running it, and `execution_status` turned
+        that into "the server was restarted", which is the one explanation that
+        was never true. The page then sent the user to the backend log for a
+        sentence the exception was already carrying.
+
+        Read back from disk rather than through the caller's Project: the step
+        has been writing to that file throughout, so the object the thread
+        started with no longer knows what is on it.
+        """
+        try:
+            project = Project(project_id)
+            if project.step_errors.get(step_name):
+                return
+            # A bare `raise SomeError` carries no message; the class name is
+            # then the only thing that says anything about what stopped.
+            project.fail_step(step_name, str(error).strip() or error.__class__.__name__)
+        except Exception:
+            logger.exception(f"Could not record why {step_name} failed for project {project_id}")
 
     def _register_process(self, key: str):
         with self._lock:
@@ -260,8 +294,9 @@ class PipelineOrchestrator:
                 # the page while the step runs.
                 with reporting_to(lambda message: self._note_progress(key, message)):
                     self._exec_service(project, step_name, full=full)
-            except Exception:
+            except Exception as e:
                 logger.exception(f"Step {step_name} failed for project {project_id}")
+                self._record_step_failure(project_id, step_name, e)
             finally:
                 self._unregister_process(key)
 

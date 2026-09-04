@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 import csv
 import logging
+import math
 import os
 import re
 import threading
@@ -291,6 +292,12 @@ class ThumbnailSettings:
         )
 
 
+# The shortest window a trim may leave behind. The model picks a highlight worth
+# publishing; the trim only nudges its edges, and a window shorter than this is
+# a slip of a nudge button rather than an edit anybody meant.
+CLIP_MIN_DURATION = 0.5
+
+
 @dataclass
 class Highlight:
     highlight_text: str
@@ -402,6 +409,20 @@ class Highlight:
     # between renders, so this is what a browser cache is busted with after a
     # clip is regenerated.
     rendered_at: Optional[str] = None
+    # The output geometry the file on disk was actually cut with. Changing the
+    # project's aspect ratio or resolution re-shapes every clip without touching
+    # a file, so without these a card boxed to the new shape goes on playing a
+    # cut made for the old one — a crop nobody asked for, presented as the
+    # finished clip. None means a file cut before this was recorded, which reads
+    # as "matches" rather than as stale.
+    rendered_aspect_ratio: Optional[str] = None
+    rendered_resolution: Optional[str] = None
+    # When somebody last moved this clip's start or end, or None for a window
+    # nobody has touched. Kept because a trim does not re-cut anything: the file
+    # on disk still holds the old window, and a card showing the new timecodes
+    # over the old footage is a lie the user has no way to spot. Later than
+    # `rendered_at` is what "this clip needs cutting again" means.
+    trimmed_at: Optional[str] = None
     # How this clip's thumbnail is built, or None for a clip nobody has chosen
     # a frame for. None is not "no thumbnail": it means the defaults, which is
     # exactly what a thumbnail rendered without any input uses.
@@ -482,6 +503,14 @@ class Highlight:
             ),
             overlay_burned=data.get("overlay_burned", False),
             rendered_at=data.get("rendered_at"),
+            # Absent for every clip cut before the geometry was recorded, which
+            # is read as matching the current settings: the alternative is
+            # declaring every already-rendered clip in every project stale.
+            rendered_aspect_ratio=data.get("rendered_aspect_ratio"),
+            rendered_resolution=data.get("rendered_resolution"),
+            # Absent for every clip whose window is still the one the model
+            # picked, which is every clip written before trimming existed.
+            trimmed_at=data.get("trimmed_at"),
             # Absent for every clip whose thumbnail has never been touched,
             # which reads as "the defaults" rather than as "none".
             thumbnail=(
@@ -616,6 +645,101 @@ class DescriptionSettings:
         )
 
 
+# The widest a project may ask the highlights prompt for. Not what anything
+# defaults to — see `backend/src/services/highlight_options.py` — only what
+# stops a typo in a number field from becoming a prompt asking for a thousand
+# ten-hour clips.
+HIGHLIGHT_MAX_CLIPS = 100
+HIGHLIGHT_MAX_DURATION = 3600.0
+
+
+def _as_count(value: Any, low: int, high: int) -> Optional[int]:
+    """A whole number inside `[low, high]`, or None for anything that is not one.
+
+    None is "the project has no opinion", which is how every field of
+    `HighlightSettings` keeps following the application.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if low <= number <= high else None
+
+
+def _as_duration(value: Any, low: float, high: float) -> Optional[float]:
+    """A length in seconds inside `[low, high]`, or None when it is not one."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number if low <= number <= high else None
+
+
+@dataclass
+class HighlightSettings:
+    """What this project asks the highlights prompt for, when it differs from the app's.
+
+    The prompt used to hard-code how many segments to find and how long they
+    may run, which made every project a podcast cut into 7–12 shorts. A
+    two-hour interview and a ten-minute talk do not have the same number of
+    good moments in them, and TikTok and a conference reel do not want the same
+    lengths — so these are settings rather than sentences in a file.
+
+    Every field is None while the project has no opinion, which is what keeps
+    the application default live: change it in Settings and a project that
+    never chose follows it. `guidance` is free text appended to the prompt —
+    what this project counts as a highlight, in the user's own words — and is
+    empty by default, meaning the prompt says nothing extra.
+    """
+    min_clips: Optional[int] = None
+    max_clips: Optional[int] = None
+    min_duration: Optional[float] = None
+    max_duration: Optional[float] = None
+    guidance: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Any) -> 'HighlightSettings':
+        if not isinstance(data, dict):
+            return cls()
+        return cls(
+            # Bounded rather than trusted: these numbers are written into a
+            # prompt, and "find 4000 segments" is a bill rather than a request.
+            min_clips=_as_count(data.get("min_clips"), 1, HIGHLIGHT_MAX_CLIPS),
+            max_clips=_as_count(data.get("max_clips"), 1, HIGHLIGHT_MAX_CLIPS),
+            min_duration=_as_duration(data.get("min_duration"), 1, HIGHLIGHT_MAX_DURATION),
+            max_duration=_as_duration(data.get("max_duration"), 1, HIGHLIGHT_MAX_DURATION),
+            guidance=str(data.get("guidance") or ""),
+        )
+
+
+def _as_hour(value: Any) -> Optional[int]:
+    """An hour of the day, or None for anything that is not one."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 0 <= value <= 23 else None
+
+
+def _as_start_date(value: Any) -> Optional[str]:
+    """A YYYY-MM-DD day, or None for anything that is not one.
+
+    Checked for shape rather than parsed: this is written back into a date
+    input, and a string that is not a date empties it silently instead of
+    showing the user something they never typed.
+    """
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return None
+    return value
+
+
 @dataclass
 class PostizSettings:
     """Where this project's clips are imported, when it differs from the app's.
@@ -642,6 +766,19 @@ class PostizSettings:
     # application. 0 means all of them on the same day, which is what an import
     # did before anybody could say otherwise.
     per_day: Optional[int] = None
+    # The rest of the calendar, shaped exactly like `UploadSettings` and read
+    # by the same arithmetic: a project spread "two a day between nine and
+    # nine" has to mean one thing whether the clips go to YouTube or to Postiz,
+    # and two panels that disagree about which questions can be asked is how it
+    # stops meaning one thing.
+    #
+    # `start_date` is the day the run begins, as YYYY-MM-DD; None is "as soon
+    # as the import is allowed to place one", which is the only answer a run
+    # with no date can give. The hours are the window a day's posts are spread
+    # between, first and last, on the clock of the machine running this.
+    start_date: Optional[str] = None
+    day_start_hour: Optional[int] = None
+    day_end_hour: Optional[int] = None
     # What each post says, and what goes in the comment under it. Empty means
     # "use the application's", the same way the description template does.
     text_template: str = ""
@@ -684,6 +821,9 @@ class PostizSettings:
             post_type=post_type,
             channel_settings=per_channel,
             per_day=per_day,
+            start_date=_as_start_date(data.get("start_date")),
+            day_start_hour=_as_hour(data.get("day_start_hour")),
+            day_end_hour=_as_hour(data.get("day_end_hour")),
             text_template=str(data.get("text_template") or ""),
             comment_template=str(data.get("comment_template") or ""),
         )
@@ -695,13 +835,6 @@ class PostizSettings:
 # when the hour comes; it is offered as a fourth choice because that is how the
 # user thinks about it, and the uploader takes it apart again.
 UPLOAD_PRIVACY_CHOICES = ("private", "unlisted", "public", "schedule")
-
-
-def _as_hour(value: Any) -> Optional[int]:
-    """An hour of the day, or None for anything that is not one."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        return None
-    return value if 0 <= value <= 23 else None
 
 
 @dataclass
@@ -747,17 +880,10 @@ class UploadSettings:
         if isinstance(per_day, bool) or not isinstance(per_day, int) or per_day < 0:
             per_day = None
 
-        # Checked for shape rather than parsed: this is written back into a
-        # date input, and a string that is not a date empties it silently
-        # instead of showing the user something they never typed.
-        start_date = data.get("start_date")
-        if not isinstance(start_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date):
-            start_date = None
-
         return cls(
             privacy=privacy,
             per_day=per_day,
-            start_date=start_date,
+            start_date=_as_start_date(data.get("start_date")),
             day_start_hour=_as_hour(data.get("day_start_hour")),
             day_end_hour=_as_hour(data.get("day_end_hour")),
         )
@@ -785,6 +911,10 @@ class ProjectSettings:
     # into its clips.
     overlay: OverlayText = field(default_factory=OverlayText)
     description: DescriptionSettings = field(default_factory=DescriptionSettings)
+    # What this project asks the highlights prompt for: how many segments, how
+    # long they may run, and anything else it counts as a highlight. Empty
+    # means "follow Settings" — see HighlightSettings.
+    highlights: HighlightSettings = field(default_factory=HighlightSettings)
     # Where this project's clips are imported, when it differs from the
     # application's. Default-constructed and empty, which means "follow the
     # application settings" — see PostizSettings.
@@ -818,6 +948,7 @@ class ProjectSettings:
             # would otherwise reappear over every clip at once.
             overlay=OverlayText.from_dict({**(data.get("overlay") or {}), "text": ""}),
             description=DescriptionSettings.from_dict(data.get("description")),
+            highlights=HighlightSettings.from_dict(data.get("highlights")),
             postiz=PostizSettings.from_dict(data.get("postiz")),
             upload=UploadSettings.from_dict(data.get("upload")),
             # Anything else — a typo, a value from a later version — reads as
@@ -1057,6 +1188,77 @@ class Project:
             data["llm_outputs"] = outputs
 
         self.llm_outputs = self._mutate_metadata(mutate)["llm_outputs"]
+
+    def trim_highlight(self, index: int, start: float, end: float) -> Dict[str, Any]:
+        """Moves one highlight's start and end, in seconds into the source video.
+
+        The whole window is written rather than a delta, because that is what the
+        editor holds: the user nudges an edge a second at a time and the numbers
+        on screen are the ones that must end up stored.
+
+        Nothing is re-cut here. The clip file, if there is one, still holds the
+        old window until the user asks for a render — which is exactly why
+        `trimmed_at` is stamped: it is what tells the grid the file has fallen
+        behind the numbers beside it.
+
+        Everything timed from the start of the clip moves with it. The caption
+        cues are rebuilt from the word map on every read, so they follow by
+        themselves; the thumbnail's chosen frame is stored, so it is pulled back
+        inside the new window here rather than silently pointing past the end.
+
+        Only the near edge is bounded: `start` cannot go negative, and the window
+        cannot close below `CLIP_MIN_DURATION`. The far edge is not, because
+        nothing here knows how long the source is — ffmpeg cuts to the end of the
+        file, and the browser, which does know, clamps before it ever asks.
+
+        Raises IndexError when there is no highlight at `index`, and ValueError
+        for a window that is not two usable numbers.
+        """
+        try:
+            new_start = max(0.0, float(start))
+            new_end = float(end)
+        except (TypeError, ValueError):
+            raise ValueError("start and end must be numbers")
+        if not (math.isfinite(new_start) and math.isfinite(new_end)):
+            raise ValueError("start and end must be numbers")
+        if new_end - new_start < CLIP_MIN_DURATION:
+            raise ValueError(
+                f"A clip has to be at least {CLIP_MIN_DURATION} seconds long."
+            )
+
+        stamp = datetime.now().isoformat()
+        trimmed: Dict[str, Any] = {}
+
+        def mutate(data: Dict[str, Any]):
+            highlights = data.get("highlights", [])
+            if index < 0 or index >= len(highlights):
+                raise IndexError(f"No highlight at index {index}")
+            entry = highlights[index]
+            entry["start"] = new_start
+            entry["end"] = new_end
+            entry["trimmed_at"] = stamp
+            thumbnail = entry.get("thumbnail")
+            if isinstance(thumbnail, dict):
+                thumbnail["frame_time"] = _bounded(
+                    thumbnail.get("frame_time", 0.0), 0.0, new_end - new_start, 0.0
+                )
+            trimmed.update(entry)
+            data["highlights"] = highlights
+
+        self._mutate_metadata(mutate)
+
+        # The in-memory copy is what the caller answers the request from, so it
+        # is moved to match rather than left on the window that was replaced.
+        if 0 <= index < len(self.highlights):
+            highlight = self.highlights[index]
+            highlight.start = new_start
+            highlight.end = new_end
+            highlight.trimmed_at = stamp
+            if highlight.thumbnail is not None:
+                highlight.thumbnail.frame_time = _bounded(
+                    highlight.thumbnail.frame_time, 0.0, new_end - new_start, 0.0
+                )
+        return trimmed
 
     def delete_highlight(self, index: int):
         """Removes the highlight at `index` along with any clip cut from it.

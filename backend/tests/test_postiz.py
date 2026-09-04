@@ -2,14 +2,17 @@
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 import pytest
 
 from backend.src.dataclasses.data import Project
+from backend.src.infrastructure import postiz_client
 from backend.src.infrastructure.postiz_client import (
     CLOUD_API_URL,
+    MAX_UPLOAD_BYTES,
     MissingPostizCredentialsError,
     PostizClient,
     PostizError,
@@ -235,6 +238,65 @@ def test_a_url_that_already_names_the_version_is_left_alone():
 def test_no_api_key_is_refused_as_something_the_user_can_fix():
     with pytest.raises(MissingPostizCredentialsError):
         PostizClient(api_url="https://postiz.example.com", api_key="")
+
+
+# --- How big a clip may be --------------------------------------------------
+
+def sparse_clip(tmp_path, size, name="clip_001.mp4"):
+    """A file of `size` bytes that costs nothing to write."""
+    path = tmp_path / name
+    with open(path, "wb") as handle:
+        handle.truncate(size)
+    return path
+
+
+def answering(monkeypatch, status, payload=None):
+    """Every request answered with one status. Returns the calls it collected."""
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        return httpx.Response(
+            status,
+            json=payload if payload is not None else {},
+            request=httpx.Request(method, url),
+        )
+
+    monkeypatch.setattr(postiz_client.httpx, "request", fake_request)
+    return calls
+
+
+def test_a_clip_over_the_old_fifty_megabytes_is_still_sent(tmp_path, monkeypatch):
+    # 50MB is the JSON body cap on the post routes, not what `/upload` takes:
+    # most rendered clips of any length are past it.
+    path = sparse_clip(tmp_path, 60 * 1024 * 1024)
+    calls = answering(monkeypatch, 200, {"id": "media-1", "path": "https://u/1.mp4"})
+
+    client = PostizClient(api_url="https://postiz.example.com", api_key="key")
+    assert client.upload_file(str(path))["id"] == "media-1"
+    assert calls[0][1].endswith("/upload")
+
+
+def test_a_clip_past_what_postiz_holds_is_refused_before_the_transfer(
+    tmp_path, monkeypatch
+):
+    path = sparse_clip(tmp_path, MAX_UPLOAD_BYTES + 1)
+    calls = answering(monkeypatch, 200, {"id": "media-1"})
+
+    client = PostizClient(api_url="https://postiz.example.com", api_key="key")
+    with pytest.raises(PostizError, match="1024MB"):
+        client.upload_file(str(path))
+    assert calls == []
+
+
+def test_an_upload_refused_as_too_large_names_the_proxy(tmp_path, monkeypatch):
+    # Postiz itself takes 1GB, so a 413 is something in front of it.
+    path = sparse_clip(tmp_path, 60 * 1024 * 1024)
+    answering(monkeypatch, 413)
+
+    client = PostizClient(api_url="https://postiz.example.com", api_key="key")
+    with pytest.raises(PostizError, match="client_max_body_size"):
+        client.upload_file(str(path))
 
 
 # --- What gets filed --------------------------------------------------------
@@ -1150,38 +1212,53 @@ def test_a_post_type_the_project_file_should_not_hold_is_ignored(project_root):
 
 # --- When the drafts land ---------------------------------------------------
 
-def dates_for(project_dir, client, count, **settings):
-    """The scheduled date of each clip, in clip order."""
-    service = publisher(project_dir, client, settings=settings)
-    project = Project(PROJECT_ID)
-    return [
-        service.build_payload(project, project.highlights[i], client.integrations, {"id": "m"}, i)["date"]
-        for i in range(count)
-    ]
+# The clock these run on: a Saturday in a timezone that is not UTC, so a test
+# that gets the offset wrong cannot pass by accident. The same clock the
+# uploader's schedule tests use, because the two schedules answer the same
+# questions and are asserted against the same arithmetic.
+TZ = timezone(timedelta(hours=2))
 
 
-@pytest.fixture
-def at_hour(monkeypatch):
-    """Runs the scheduler as though it were a given hour of a given UTC day.
+def at_hour(hour: int, minute: int = 0):
+    """A clock pinned to one moment of that Saturday, on the user's own zone.
 
     Every assertion about which day a clip lands on depends on the time of day
     the run happens at, so left to the real clock these tests pass all morning
     and fail after tea — which is exactly how the day-shifting bug reached the
     suite unnoticed.
     """
-    import backend.src.services.postiz_publisher as publisher_module
+    pinned = datetime(2026, 8, 22, hour, minute, tzinfo=TZ)
+    return lambda: pinned
 
-    def freeze(hour: int, minute: int = 0):
-        pinned = datetime(2026, 8, 22, hour, minute, tzinfo=timezone.utc)
 
-        class FrozenDatetime(datetime):
-            @classmethod
-            def now(cls, tz=None):
-                return pinned if tz else pinned.replace(tzinfo=None)
+def as_local(value: str) -> datetime:
+    """One Postiz date back on the clock the schedule was built on.
 
-        monkeypatch.setattr(publisher_module, "datetime", FrozenDatetime)
+    Postiz is told UTC; the hours the user picked are theirs. Asserting on the
+    wire format instead would make every expectation here a fact about the
+    machine running the suite.
+    """
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.000Z").replace(
+        tzinfo=timezone.utc
+    ).astimezone(TZ)
 
-    return freeze
+
+def local_days(dates):
+    return [as_local(value).strftime("%Y-%m-%d") for value in dates]
+
+
+def local_hours(dates):
+    return [as_local(value).hour for value in dates]
+
+
+def dates_for(project_dir, client, count, now=None, **settings):
+    """The scheduled date of each clip, in clip order."""
+    service = publisher(project_dir, client, settings=settings, now=now or at_hour(12))
+    project = Project(PROJECT_ID)
+    return [
+        service.build_payload(project, project.highlights[i], client.integrations, {"id": "m"}, i)["date"]
+        for i in range(count)
+    ]
 
 
 def test_everything_lands_at_once_unless_a_cadence_is_asked_for(project_root):
@@ -1193,35 +1270,32 @@ def test_everything_lands_at_once_unless_a_cadence_is_asked_for(project_root):
     assert len(set(dates)) == 1
 
 
-def test_a_run_after_the_day_s_first_slot_moves_the_whole_schedule(project_root, at_hour):
+def test_a_run_after_the_day_s_first_slot_moves_the_whole_schedule(project_root):
     # Shifting only the clips whose own slot had passed put them on the day the
     # next clip already had: an afternoon run of three at one a day produced
     # tomorrow, tomorrow, the day after — two clips on one day, from a setting
     # that says one.
-    at_hour(15)
     project_dir = write_project(project_root, [highlight(), highlight(), highlight()])
 
-    days = [date[:10] for date in dates_for(project_dir, FakePostiz(), 3, postiz_per_day=1)]
+    days = local_days(dates_for(project_dir, FakePostiz(), 3, now=at_hour(15), postiz_per_day=1))
 
     assert days == ["2026-08-23", "2026-08-24", "2026-08-25"]
 
 
-def test_a_run_before_the_day_s_first_slot_starts_today(project_root, at_hour):
-    at_hour(6)
+def test_a_run_before_the_day_s_first_slot_starts_today(project_root):
     project_dir = write_project(project_root, [highlight(), highlight()])
 
-    days = [date[:10] for date in dates_for(project_dir, FakePostiz(), 2, postiz_per_day=1)]
+    days = local_days(dates_for(project_dir, FakePostiz(), 2, now=at_hour(6), postiz_per_day=1))
 
     assert days == ["2026-08-22", "2026-08-23"]
 
 
-def test_no_two_clips_ever_share_a_slot(project_root, at_hour):
+def test_no_two_clips_ever_share_a_slot(project_root):
     # Whatever the hour, `n` clips at `per_day` produce `n` distinct moments.
     project_dir = write_project(project_root, [highlight() for _ in range(6)])
 
     for hour in (0, 6, 9, 12, 15, 21, 23):
-        at_hour(hour)
-        dates = dates_for(project_dir, FakePostiz(), 6, postiz_per_day=2)
+        dates = dates_for(project_dir, FakePostiz(), 6, now=at_hour(hour), postiz_per_day=2)
         assert len(set(dates)) == 6, f"a {hour}:00 run put two clips on one slot"
         assert dates == sorted(dates), f"a {hour}:00 run put the clips out of order"
 
@@ -1229,7 +1303,7 @@ def test_no_two_clips_ever_share_a_slot(project_root, at_hour):
 def test_one_a_day_puts_each_clip_on_its_own_day(project_root):
     project_dir = write_project(project_root, [highlight(), highlight(), highlight()])
 
-    days = [date[:10] for date in dates_for(project_dir, FakePostiz(), 3, postiz_per_day=1)]
+    days = local_days(dates_for(project_dir, FakePostiz(), 3, postiz_per_day=1))
 
     assert len(set(days)) == 3
     assert days == sorted(days)
@@ -1239,7 +1313,7 @@ def test_two_a_day_puts_two_on_each_day_at_different_hours(project_root):
     project_dir = write_project(project_root, [highlight() for _ in range(4)])
 
     dates = dates_for(project_dir, FakePostiz(), 4, postiz_per_day=2)
-    days = [date[:10] for date in dates]
+    days = local_days(dates)
 
     assert days[0] == days[1] and days[2] == days[3]
     assert days[0] != days[2]
@@ -1247,10 +1321,11 @@ def test_two_a_day_puts_two_on_each_day_at_different_hours(project_root):
 
 
 def test_the_slots_are_hours_a_person_would_post_at(project_root):
-    # Dividing a day evenly would put the second of two posts at 3am.
+    # Dividing a day evenly would put the second of two posts at 3am. The hours
+    # are read back on the user's clock, which is the clock they were picked on.
     project_dir = write_project(project_root, [highlight(), highlight()])
 
-    hours = [int(date[11:13]) for date in dates_for(project_dir, FakePostiz(), 2, postiz_per_day=2)]
+    hours = local_hours(dates_for(project_dir, FakePostiz(), 2, postiz_per_day=2))
 
     assert hours == [9, 21]
 
@@ -1258,13 +1333,10 @@ def test_the_slots_are_hours_a_person_would_post_at(project_root):
 def test_the_day_window_can_be_moved(project_root):
     project_dir = write_project(project_root, [highlight(), highlight(), highlight()])
 
-    hours = [
-        int(date[11:13])
-        for date in dates_for(
-            project_dir, FakePostiz(), 3,
-            postiz_per_day=3, postiz_day_start_hour=8, postiz_day_end_hour=16,
-        )
-    ]
+    hours = local_hours(dates_for(
+        project_dir, FakePostiz(), 3,
+        postiz_per_day=3, postiz_day_start_hour=8, postiz_day_end_hour=16,
+    ))
 
     assert hours == [8, 12, 16]
 
@@ -1272,7 +1344,7 @@ def test_the_day_window_can_be_moved(project_root):
 def test_a_project_can_drip_while_the_application_posts_everything_at_once(project_root):
     project_dir = write_project(project_root, [highlight(), highlight()], postiz={"per_day": 1})
 
-    days = [date[:10] for date in dates_for(project_dir, FakePostiz(), 2)]
+    days = local_days(dates_for(project_dir, FakePostiz(), 2))
 
     assert len(set(days)) == 2
 
@@ -1284,6 +1356,67 @@ def test_a_project_can_say_all_at_once_while_the_application_drips(project_root)
     days = dates_for(project_dir, FakePostiz(), 2, postiz_per_day=1)
 
     assert len(set(days)) == 1
+
+
+# --- The calendar the project asked for -------------------------------------
+#
+# The same questions the YouTube panel asks, answered the same way: a project
+# spread "two a day between nine and nine from Monday" has to land on one
+# calendar whichever platform the clips go to.
+
+def test_a_named_day_starts_the_run_at_the_first_hour_of_the_window(project_root):
+    project_dir = write_project(project_root, [highlight()])
+
+    dates = dates_for(
+        project_dir, FakePostiz(), 1,
+        postiz_schedule_start_date="2026-09-01", postiz_day_start_hour=8,
+    )
+
+    assert as_local(dates[0]).strftime("%Y-%m-%d %H:%M") == "2026-09-01 08:00"
+
+
+def test_a_project_can_name_its_own_first_day(project_root):
+    project_dir = write_project(
+        project_root, [highlight()], postiz={"start_date": "2026-09-05"}
+    )
+
+    dates = dates_for(project_dir, FakePostiz(), 1, postiz_schedule_start_date="2026-09-01")
+
+    assert local_days(dates) == ["2026-09-05"]
+
+
+def test_a_project_can_move_its_own_day_window(project_root):
+    project_dir = write_project(
+        project_root, [highlight(), highlight()],
+        postiz={"day_start_hour": 7, "day_end_hour": 11},
+    )
+
+    hours = local_hours(dates_for(
+        project_dir, FakePostiz(), 2,
+        postiz_per_day=2, postiz_day_start_hour=9, postiz_day_end_hour=21,
+    ))
+
+    assert hours == [7, 11]
+
+
+def test_a_day_already_gone_does_not_file_posts_behind_the_user(project_root):
+    # A date chosen last week is a calendar the user cannot cancel from. The
+    # offset ahead of now is the floor, exactly as the upload lead is.
+    project_dir = write_project(project_root, [highlight()])
+
+    dates = dates_for(
+        project_dir, FakePostiz(), 1, now=at_hour(14), postiz_schedule_start_date="2020-01-01"
+    )
+
+    assert as_local(dates[0]).strftime("%Y-%m-%d %H:%M") == "2026-08-22 15:00"
+
+
+def test_a_date_nobody_can_read_imports_anyway(project_root):
+    project_dir = write_project(project_root, [highlight()], postiz={"start_date": "next tuesday"})
+
+    dates = dates_for(project_dir, FakePostiz(), 1, now=at_hour(14))
+
+    assert as_local(dates[0]).strftime("%Y-%m-%d %H:%M") == "2026-08-22 15:00"
 
 
 def test_a_clip_keeps_its_slot_however_it_was_imported(project_root):

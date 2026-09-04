@@ -2,7 +2,9 @@ import React, { useEffect, useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CaptionStyler } from '../ClipManagement/CaptionStyler';
 import { OverlayStyler } from '../ClipManagement/OverlayStyler';
+import { PromoteToDefaults } from '../PromoteToDefaults';
 import { DescriptionPanel } from './DescriptionPanel';
+import { HighlightsPanel } from './HighlightsPanel';
 import { PostizPanel } from './PostizPanel';
 import { UploadPanel } from './UploadPanel';
 import {
@@ -171,7 +173,31 @@ export const ProjectSettingsMenu: React.FC<ProjectSettingsMenuProps> = ({ metada
           </span>
         </div>
 
+        {/* On its own row rather than beside the three selects: it is about all
+            of them, and inside the group it would read as a fourth setting.
+
+            These three fill every key they write, so nothing has to be read
+            back off the application first — which is what keeps a control that
+            is always on screen from asking for the settings, API keys and all,
+            on every project page that never touches it. */}
+        <PromoteToDefaults
+          divider={false}
+          needsCurrent={false}
+          build={() => ({
+            video_defaults: { resolution: currentResolution, aspect_ratio: currentAspectRatio },
+            clip_preview_default: currentClipPreview,
+          })}
+          hint="New projects start at this resolution, this aspect ratio and this card preview. Projects that already exist keep their own."
+        />
+
         <div className="options-bar__group">
+          {/* First of the group: it decides what the clips are before anything
+              else decides how they look or where they go. */}
+          <HighlightsPanel
+            variant="inline"
+            projectId={metadata.project_id}
+            settings={metadata.settings?.highlights}
+          />
           <CaptionStyler
             variant="inline"
             projectId={metadata.project_id}

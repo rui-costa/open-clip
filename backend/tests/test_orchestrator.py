@@ -140,6 +140,53 @@ def test_run_step_clears_process_when_service_raises(project_root):
     assert orchestrator.active_processes == {}
 
 
+def test_a_step_that_dies_says_why_on_the_project(project_root):
+    """The sentence the page shows instead of sending the user to the log."""
+
+    class FailingService:
+        def execute(self, project):
+            raise RuntimeError("YouTube has rejected the stored authorisation.")
+
+    orchestrator = make_orchestrator({"clipper": FailingService()})
+
+    orchestrator.run_step(PROJECT_ID, "clipper")
+    orchestrator.active_project_orchestrators[PROJECT_ID].join(timeout=5)
+
+    metadata = json.loads((project_root / "projects" / PROJECT_ID / "metadata.json").read_text())
+    assert metadata["step_statuses"]["clipper"] == "error"
+    assert metadata["step_errors"]["clipper"] == "YouTube has rejected the stored authorisation."
+
+
+def test_a_failure_carrying_no_message_is_named_by_its_type(project_root):
+    class FailingService:
+        def execute(self, project):
+            raise TimeoutError()
+
+    orchestrator = make_orchestrator({"clipper": FailingService()})
+
+    orchestrator.run_step(PROJECT_ID, "clipper")
+    orchestrator.active_project_orchestrators[PROJECT_ID].join(timeout=5)
+
+    metadata = json.loads((project_root / "projects" / PROJECT_ID / "metadata.json").read_text())
+    assert metadata["step_errors"]["clipper"] == "TimeoutError"
+
+
+def test_a_service_that_reported_its_own_reason_keeps_it(project_root):
+    """A per-clip reason beats anything the thread that caught it could say."""
+
+    class PartlyFailingService:
+        def execute(self, project):
+            project.fail_step("clipper", "3 of 10 clips could not be cut: the source is gone.")
+
+    orchestrator = make_orchestrator({"clipper": PartlyFailingService()})
+
+    orchestrator.run_step(PROJECT_ID, "clipper")
+    orchestrator.active_project_orchestrators[PROJECT_ID].join(timeout=5)
+
+    metadata = json.loads((project_root / "projects" / PROJECT_ID / "metadata.json").read_text())
+    assert metadata["step_errors"]["clipper"] == "3 of 10 clips could not be cut: the source is gone."
+
+
 def test_run_step_ignores_duplicate_trigger_while_running(project_root):
     service = BlockingService()
     orchestrator = make_orchestrator({"clipper": service})

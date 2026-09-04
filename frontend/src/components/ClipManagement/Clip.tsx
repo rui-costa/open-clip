@@ -16,6 +16,7 @@ import { ClipPlayer } from './ClipPlayer';
 import { TextOverlay } from './TextOverlay';
 import { OverlayTextEditor } from './OverlayTextEditor';
 import { ThumbnailEditor } from './ThumbnailEditor';
+import { ClipTrimmer } from './ClipTrimmer';
 import { formatTimecode } from '../../utils/aspectRatio';
 import { useInViewport } from '../../hooks/useInViewport';
 import { describeRequestFailure, useClipRender } from '../../hooks/useClipRender';
@@ -36,6 +37,20 @@ export interface ClipData {
   overlayBurned?: boolean;
   /** When the file was last cut. The filename does not change between renders. */
   renderedAt?: string | null;
+  /**
+   * When this clip's window was last moved, or absent for one nobody has
+   * trimmed. A trim cuts nothing, so a stamp later than `renderedAt` means the
+   * file still holds the window from before the edit.
+   */
+  trimmedAt?: string | null;
+  /**
+   * True when the file on disk was cut to output settings the project no longer
+   * has — its aspect ratio or resolution was changed afterwards, and nothing
+   * re-cuts a clip when they are. The card goes back to previewing from the
+   * source while this holds: the picture is boxed to the new shape, and the old
+   * cut played inside it is a crop that will never be rendered.
+   */
+  outputStale?: boolean;
   /**
    * What this clip would be published as: the YouTube Short title the video
    * meta step wrote. Absent until that step has run.
@@ -158,6 +173,7 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
   const [isEditingCaptions, setIsEditingCaptions] = useState(false);
   const [isEditingOverlay, setIsEditingOverlay] = useState(false);
   const [isEditingThumbnail, setIsEditingThumbnail] = useState(false);
+  const [isTrimming, setIsTrimming] = useState(false);
   // What the overlay editor is typing, held here so the card's own picture
   // redraws per keystroke rather than waiting for the save to come back.
   const [overlayDraft, setOverlayDraft] = useState<OverlayText | null>(null);
@@ -166,6 +182,16 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
   const [actionResult, setActionResult] = useState<{ ok: boolean; message: string } | null>(null);
   const navigate = useNavigate();
   const isRendered = clip.isRendered && !!clip.filename;
+  // Whether that file is what the card should be showing. Changing the
+  // project's aspect ratio or resolution re-shapes every preview and re-cuts
+  // nothing, so a file made under the old settings is played inside a frame it
+  // was never cut for — letterboxed, or cropped to something the render will
+  // not produce. The card falls back to the source window until the clip is cut
+  // again, which is the only picture that honestly shows the new shape. The
+  // buttons still treat the clip as rendered: the file is there, and what it
+  // needs is a re-render. The exception is a project whose source video has
+  // gone — there is no window left to preview, so the old cut is all there is.
+  const playsRendered = isRendered && (!clip.outputStale || !sourceUrl);
 
   // Captured once at mount, so this is true only for a clip that was still a
   // preview when the page opened and finished rendering while the user
@@ -188,6 +214,7 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
     isEditingCaptions ||
     isEditingOverlay ||
     isEditingThumbnail ||
+    isTrimming ||
     (playingClipIndex !== null && playingClipIndex !== clip.index);
   const [mediaRef, hasApproached] = useInViewport<HTMLDivElement>();
 
@@ -250,7 +277,7 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
   // What the caption dialog places its captions on. The cut file when there is
   // one and it is still clean; otherwise the source inside this highlight's
   // window, which is what the next render will be cut from anyway.
-  const useSourceForCaptionPreview = !isRendered || !!clip.captionsBurned;
+  const useSourceForCaptionPreview = !playsRendered || !!clip.captionsBurned;
   const captionPreviewSrc = useSourceForCaptionPreview ? sourceUrl : videoSrc;
   const captionPreview: CaptionPreviewSource | null = captionPreviewSrc
     ? {
@@ -267,7 +294,7 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
   // that already carries it would show the edit and the burned copy at once.
   // Burned captions are no reason to avoid the file here — they are not what is
   // being placed.
-  const useSourceForOverlayPreview = !isRendered || !!clip.overlayBurned;
+  const useSourceForOverlayPreview = !playsRendered || !!clip.overlayBurned;
   const overlayPreviewSrc = useSourceForOverlayPreview ? sourceUrl : videoSrc;
   const overlayPreview: CaptionPreviewSource | null = overlayPreviewSrc
     ? {
@@ -296,6 +323,17 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
     : videoSrc
       ? { src: videoSrc, start: 0, end: null, isPreview: false, aspectRatio, label: cardLabel }
       : null;
+
+  // A trim moves the highlight and touches no file, so a cut clip can be
+  // playing footage the timecodes above it no longer describe. Both stamps are
+  // ISO, so the later one is the later edit and a string compare settles it.
+  const needsRecut =
+    isRendered && !!clip.trimmedAt && (!clip.renderedAt || clip.trimmedAt > clip.renderedAt);
+  // Two different ways the file can be behind the project, and one answer to
+  // both: cut it again. They are kept apart because only the first is about the
+  // window, and the trim button must not claim a changed aspect ratio was a
+  // trim.
+  const needsRerender = needsRecut || (isRendered && !!clip.outputStale);
 
   // The same re-cut the clip detail page runs, from the grid: a title or a
   // caption change is made per clip, and having to open each clip to burn it in
@@ -399,8 +437,11 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
             rows of chrome for two facts that fit in a corner. */}
         <div className="clip-card__overlay">
           {/* Only the preview state is worth a pill. "Rendered" restated what
-              the card already shows — a cut file playing from its own start. */}
-          {!isRendered && (
+              the card already shows — a cut file playing from its own start.
+              A clip whose file no longer matches the output settings is showing
+              a preview too, and says so: the picture is the source under the new
+              shape, not the file that would be published. */}
+          {!playsRendered && (
             <span
               className="status-badge"
               style={{
@@ -446,10 +487,10 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
           // the same frame and the same transport; only what it is playing
           // changes, from a window inside the source to the cut file.
           <ClipPlayer
-            src={isRendered ? (videoSrc as string) : (sourceUrl as string)}
-            start={isRendered ? 0 : clip.original_start}
-            end={isRendered ? null : clip.original_end}
-            isPreview={!isRendered}
+            src={playsRendered ? (videoSrc as string) : (sourceUrl as string)}
+            start={playsRendered ? 0 : clip.original_start}
+            end={playsRendered ? null : clip.original_end}
+            isPreview={!playsRendered}
             aspectRatio={aspectRatio}
             label={cardLabel}
             shouldPause={shouldPause}
@@ -682,9 +723,13 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
               ? 'Rendering this clip…'
               : isUploading
                 ? 'This clip is being uploaded, which re-cuts it'
-                : isRendered
-                  ? 'Re-render with the current settings'
-                  : 'Render this clip'
+                : needsRecut
+                  ? 'The window moved since this was cut — re-render to apply the trim'
+                  : clip.outputStale && isRendered
+                    ? 'The output settings changed since this was cut — re-render to apply them'
+                    : isRendered
+                      ? 'Re-render with the current settings'
+                      : 'Render this clip'
           }
         >
           <Button
@@ -693,7 +738,15 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
             // An upload is cutting this same clip, into the same file.
             disabled={isRendering || isUploading || isImporting}
             aria-busy={isRendering}
-            aria-label={isRendered ? 'Re-render this clip' : 'Render this clip'}
+            aria-label={
+              needsRecut
+                ? 'Re-render this clip; its window was trimmed after it was cut'
+                : clip.outputStale && isRendered
+                  ? 'Re-render this clip; the output settings changed after it was cut'
+                  : isRendered
+                    ? 'Re-render this clip'
+                    : 'Render this clip'
+            }
             style={{
               padding: '0.25rem',
               minWidth: '44px',
@@ -701,7 +754,11 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: 'var(--text)',
+              // Accent means "this one is the exception" everywhere else on the
+              // card, and a file that no longer matches its own timecodes is
+              // exactly that. The label above says it in words too.
+              color: needsRerender ? 'var(--accent)' : 'var(--text)',
+              borderColor: needsRerender ? 'var(--accent)' : undefined,
             }}
           >
             {/* Circling arrow: the same cut, made again. Spun while the encode
@@ -768,6 +825,46 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
             <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
               <path d="M5 5h14M12 5v11" />
               <path d="M4 21h16" />
+            </svg>
+          </Button>
+        </Tooltip>
+
+        <Tooltip
+          text={
+            needsRecut
+              ? 'Trim: moved since this was cut — re-render to apply it'
+              : 'Trim the start and end of this clip'
+          }
+        >
+          <Button
+            variant="ghost"
+            onClick={() => setIsTrimming(true)}
+            aria-label={
+              needsRecut
+                ? 'Trim this clip; its window has moved since it was cut'
+                : 'Trim the start and end of this clip'
+            }
+            style={{
+              padding: 'var(--space-sm)',
+              minWidth: '44px',
+              minHeight: '44px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              // The same accent the re-render button beside it takes when the
+              // file has fallen behind the window: two marks for one fact, on
+              // the two buttons that answer it.
+              color: needsRecut ? 'var(--accent)' : 'var(--text)',
+              borderColor: needsRecut ? 'var(--accent)' : undefined,
+            }}
+          >
+            {/* Scissors: the edges of the clip, cut. */}
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="6" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <line x1="20" y1="4" x2="8.12" y2="15.88" />
+              <line x1="14.47" y1="14.48" x2="20" y2="20" />
+              <line x1="8.12" y1="8.12" x2="12" y2="12" />
             </svg>
           </Button>
         </Tooltip>
@@ -947,6 +1044,29 @@ const ClipCard: React.FC<ClipProps> = ({ projectId, clip, sourceUrl, aspectRatio
         // scrolled anywhere, and picking a frame means scrubbing one.
         preview={thumbnailPreview}
         captions={captions}
+      />
+
+      <ClipTrimmer
+        projectId={projectId}
+        clipIndex={clip.index}
+        isOpen={isTrimming}
+        onClose={() => setIsTrimming(false)}
+        start={clip.original_start}
+        end={clip.original_end}
+        // The source rather than the cut file, always: the window is a position
+        // in the source, and a cut file has nothing on either side of it to
+        // trim back into.
+        sourceUrl={sourceUrl}
+        aspectRatio={aspectRatio}
+        label={cardLabel}
+        isRendered={isRendered}
+        // The card's own re-cut, so a trim saved and cut from the dialog reports
+        // itself in the same banner as one started from the button.
+        onRerender={() => {
+          setActionResult(null);
+          void startRender();
+        }}
+        isRendering={isRendering}
       />
 
       <ConfirmationModal

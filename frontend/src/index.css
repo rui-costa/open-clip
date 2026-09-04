@@ -306,17 +306,6 @@ button[aria-disabled='true'] {
   100% { transform: scale(1); }
 }
 
-/* A new highlight arriving under Prev/Next. Offset direction is passed in as
-   --swap-from so the panel enters from the side the user paged towards. */
-@keyframes highlight-swap {
-  from { opacity: 0; transform: translateX(var(--swap-from, 12px)); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-.highlight-swap {
-  animation: highlight-swap 180ms var(--ease-out-quart);
-}
-
 .menu-enter {
   animation: entrance 140ms var(--ease-out-quart);
 }
@@ -364,6 +353,39 @@ button[aria-disabled='true'] {
   max-width: calc(var(--clip-media-h, 320px) * var(--clip-ratio, 100));
   max-height: var(--clip-media-h, 320px);
   margin-inline: auto;
+}
+
+/* The trim dialog is two panes side by side: the picture, and everything that
+   acts on it.
+
+   A trim is judged by watching, not by reading two numbers, so the video takes
+   the wider column and is the only thing that grows with the dialog. Stacking
+   the controls under it instead — which is what every other clip dialog does,
+   because they are placing text over a frame rather than moving the frame's
+   edges — spent half the panel on chrome and left the picture at thumbnail
+   size. Below 760px there is no room for two columns and it becomes one, the
+   picture first. */
+.trim-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  gap: var(--space-lg);
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .trim-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Capped by height rather than width, because the dialog is wide and a 9:16
+   short given the whole column would be taller than the screen. `--clip-ratio`
+   is set per clip, the same variable the grid uses. */
+.trim-video {
+  border: var(--border);
+  margin-inline: auto;
+  width: 100%;
+  max-width: calc(var(--trim-media-h, 58vh) * var(--clip-ratio, 1.7778));
 }
 
 /* State and timecode read over the picture rather than costing the card a row

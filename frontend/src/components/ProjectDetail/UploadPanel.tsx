@@ -2,6 +2,7 @@ import React, { useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../Modal';
 import { DateField } from '../DateField';
+import { PromoteToDefaults } from '../PromoteToDefaults';
 import {
   getYoutubeStatus,
   updateProjectSettings,
@@ -89,16 +90,32 @@ export const UploadPanel: React.FC<UploadPanelProps> = ({ projectId, settings, v
   // that follows a scheduled default is on a schedule.
   const effective: UploadPrivacy = stored.privacy ?? appPrivacy;
 
+  // Everything this project decided for itself. The privacy is only one of the
+  // five: a project that follows the default privacy but publishes on its own
+  // calendar is not following Settings, and the badge said it was.
+  const chosen = (Object.keys(EMPTY) as (keyof UploadProjectSettings)[]).filter(
+    (key) => stored[key] !== null && stored[key] !== undefined && stored[key] !== ''
+  );
+
+  // One choice is named rather than counted — "Private" says more than "1
+  // chosen", and a lone date or hour is worth naming too. Past that there is no
+  // room for a list, so the count stands in for it.
+  const badgeLabel = () => {
+    if (chosen.length === 0) return 'Default';
+    if (chosen.length > 1) return `${chosen.length} chosen`;
+    return stored.privacy ? BADGE_LABELS[stored.privacy] : '1 chosen';
+  };
+
   const badge = (
     <span
       className="status-badge"
       style={
-        stored.privacy === null
+        chosen.length === 0
           ? undefined
           : { background: 'var(--accent)', color: 'var(--on-accent, var(--bg))' }
       }
     >
-      {stored.privacy === null ? 'Default' : BADGE_LABELS[stored.privacy]}
+      {badgeLabel()}
     </span>
   );
 
@@ -254,6 +271,24 @@ export const UploadPanel: React.FC<UploadPanelProps> = ({ projectId, settings, v
             Could not save that. Uploads would use the last saved setting, not this one.
           </p>
         )}
+
+        {/* Only what this project decided, like the Postiz panel — and the
+            schedule fields travel whether or not this project is scheduled, for
+            the same reason they are kept here: a calendar somebody typed out is
+            not thrown away for a week on private. */}
+        <PromoteToDefaults
+          build={() => {
+            const next: Record<string, unknown> = {};
+            if (stored.privacy) next.youtube_privacy = stored.privacy;
+            if (stored.per_day !== null) next.youtube_schedule_per_day = stored.per_day;
+            if (stored.start_date) next.youtube_schedule_start_date = stored.start_date;
+            if (stored.day_start_hour !== null) next.youtube_schedule_day_start_hour = stored.day_start_hour;
+            if (stored.day_end_hour !== null) next.youtube_schedule_day_end_hour = stored.day_end_hour;
+            return next;
+          }}
+          hint="This becomes what every upload makes, unless the project says otherwise. It changes nothing already published, and nothing already scheduled on YouTube."
+          emptyHint="This project follows Settings for everything here, so there is nothing of its own to promote."
+        />
       </Modal>
     </>
   );

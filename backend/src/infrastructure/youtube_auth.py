@@ -85,14 +85,55 @@ def normalize_client_config(secrets: Any) -> Dict[str, Any]:
     )
 
 
+def rejection_path(token_path: Path = DEFAULT_TOKEN_PATH) -> Path:
+    """Where a refusal from Google is remembered, beside the token it refused."""
+    return token_path.with_name(token_path.name + ".rejected")
+
+
+def mark_token_rejected(reason: str, token_path: Path = DEFAULT_TOKEN_PATH) -> None:
+    """Remembers that Google refused this token, so the page stops calling it connected.
+
+    Whether a refresh token still works is a question only Google can answer,
+    and asking costs a network round trip that a status poll every few seconds
+    must not make. So the answer is kept from the one moment it is learned —
+    the refresh that failed — and the next consent clears it.
+    """
+    try:
+        path = rejection_path(token_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(reason, encoding="utf-8")
+    except Exception:
+        # Never worth failing an upload over: the upload has already failed,
+        # and this only decides how the failure reads on the page.
+        logger.warning("Could not record that the YouTube token was refused", exc_info=True)
+
+
 def token_status(token_path: Path = DEFAULT_TOKEN_PATH) -> Dict[str, Any]:
     """Whether an authorized token exists, and whether it can still be used.
 
     An expired token with a refresh token is still connected: that is the normal
     resting state, and `YoutubeClient` refreshes it on the next upload.
+
+    Unless Google has already refused to refresh it. That token is a file that
+    still reads back perfectly and buys nothing, and reporting it as connected
+    is what left a user looking at "Connected" while every upload failed.
     """
     if not token_path.exists():
         return {"connected": False, "reason": "No YouTube account has been connected yet."}
+    rejected = rejection_path(token_path)
+    if rejected.exists():
+        try:
+            reason = rejected.read_text(encoding="utf-8").strip()
+        except Exception:
+            reason = ""
+        return {
+            "connected": False,
+            "expired": True,
+            "reason": reason or (
+                "The stored authorisation is no longer accepted by Google. "
+                "Connect the channel again."
+            ),
+        }
     try:
         creds = Credentials.from_authorized_user_file(str(token_path), stored_scopes(token_path))
     except Exception as e:
@@ -129,6 +170,8 @@ def stored_scopes(token_path: Path = DEFAULT_TOKEN_PATH) -> list:
 def save_credentials(creds: Credentials, token_path: Path = DEFAULT_TOKEN_PATH) -> Path:
     token_path.parent.mkdir(parents=True, exist_ok=True)
     token_path.write_text(creds.to_json(), encoding="utf-8")
+    # A refusal is about the token being replaced here, not about this one.
+    rejection_path(token_path).unlink(missing_ok=True)
     logger.info(f"Stored YouTube credentials at {token_path}")
     return token_path
 

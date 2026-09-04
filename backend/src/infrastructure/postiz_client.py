@@ -42,9 +42,15 @@ CLOUD_API_URL = "https://api.postiz.com/public/v1"
 UPLOAD_TIMEOUT_SECONDS = 600.0
 REQUEST_TIMEOUT_SECONDS = 30.0
 
-# Postiz refuses anything larger with a 413, and finding that out after the
-# upload has been sent wastes the whole transfer.
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+# What Postiz accepts for a video, from its media library documentation: 1GB a
+# file (images are held to 10MB, which nothing here sends). Checked before the
+# transfer starts so an oversized clip fails in a second rather than after the
+# whole upload.
+#
+# The 50MB figure that turns up around Postiz is a different limit: it is the
+# JSON body cap on the post-creation routes, which is exactly why a clip is
+# uploaded to `/upload` first and the post only refers to the id it returns.
+MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 
 
 class PostizError(Exception):
@@ -169,6 +175,18 @@ class PostizClient:
             raise PostizRateLimitError(
                 f"Postiz is rate limiting this key.{allowance} Wait a while and "
                 "import the rest."
+            )
+        if response.status_code == 413:
+            # Postiz itself takes video up to 1GB, so a rendered clip that comes
+            # back too large was almost certainly stopped in front of it: nginx
+            # defaults to a 1MB body, and Cloudflare caps a free plan at 100MB.
+            # Naming that is the difference between a fixable setting and an
+            # apparently arbitrary refusal.
+            raise PostizError(
+                f"The upload was refused as too large ({method} {path}). Postiz "
+                "accepts video up to 1GB, so the limit is likely the proxy in "
+                "front of it — raise `client_max_body_size` on nginx, or the "
+                "equivalent on whatever is serving the instance."
             )
         if response.status_code >= 400:
             body = _short_body(response)

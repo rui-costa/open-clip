@@ -74,6 +74,21 @@ describe('UploadPanel', () => {
     );
   });
 
+  // The badge is the only thing on the page saying whether this project has
+  // decided anything, so a project with its own calendar cannot read "Default".
+  it('counts every setting the project chose, not just the privacy', async () => {
+    await open({ per_day: 2, day_start_hour: 9 });
+
+    expect(screen.getByText('2 chosen')).toBeDefined();
+    expect(screen.queryByText('Default')).toBeNull();
+  });
+
+  it('counts a lone setting that is not the privacy', async () => {
+    await open({ start_date: '2026-09-01' });
+
+    expect(screen.getByText('1 chosen')).toBeDefined();
+  });
+
   // The dates say nothing about a clip that is public the moment it lands, and
   // a form full of controls that change nothing is a form nobody can read.
   it('asks for a calendar only when the clips are scheduled', async () => {

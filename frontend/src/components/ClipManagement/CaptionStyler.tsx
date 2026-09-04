@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../Modal';
 import { CaptionControls } from './CaptionControls';
+import { PromoteToDefaults } from '../PromoteToDefaults';
 import {
   getCaptionStyles,
   updateProjectSettings,
@@ -143,6 +144,13 @@ export const CaptionStyler: React.FC<CaptionStylerProps> = ({ projectId, setting
             Could not save these caption settings. Clips would render with the last saved style, not this one.
           </p>
         )}
+
+        {/* The style is settled here, against real clips — this is where the
+            user finds out what they want every project to look like. */}
+        <PromoteToDefaults
+          build={() => ({ caption_defaults: current })}
+          hint="New projects start with this preset, these adjustments and this on/off state. Projects that already exist keep their own."
+        />
       </Modal>
     </>
   );

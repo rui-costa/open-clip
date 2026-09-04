@@ -11,6 +11,7 @@ clip, no subtitles, and the clip's title over it. Everything in
 """
 
 import logging
+import shutil
 import tempfile
 from dataclasses import replace
 from datetime import datetime
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from backend.src.dataclasses.data import Highlight, OverlayText, Project, ThumbnailSettings
+from backend.src.infrastructure.progress import report
 from backend.src.infrastructure.video_engine import OpenCVVideoEngine
 from backend.src.services.ass_writer import render_still_ass
 from backend.src.services.captions import CaptionService
@@ -219,6 +221,138 @@ class Thumbnailer:
         project.set_property("highlights", project.highlights)
         logger.info(f"Wrote thumbnail for clip {index} at {at}s into the clip")
         return settings
+
+    # --- The step -----------------------------------------------------------
+
+    STEP = "thumbnails"
+
+    def has_thumbnail(self, project: Project, highlight: Highlight) -> bool:
+        """Whether this clip's still is on disk right now.
+
+        Both halves, the way the clipper asks it of a cut: the metadata alone
+        lies after a thumbnails directory is deleted from under the project,
+        and a file alone says nothing about which clip it belongs to.
+        """
+        path = self.path(project, highlight)
+        return path is not None and path.exists()
+
+    def reset_metadata(self, project: Project) -> None:
+        """Throws away every rendered still, keeping what was asked of them.
+
+        The settings are the user's — the frame they picked, the extra line
+        they wrote — and survive. Only the render is dropped, because that is
+        the thing this step makes.
+        """
+        directory = self.directory(project)
+        if directory.exists():
+            shutil.rmtree(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+
+        for highlight in project.highlights:
+            settings = getattr(highlight, "thumbnail", None)
+            if settings is None:
+                continue
+            settings.generated_filename = None
+            settings.generated_at = None
+
+        project.set_property("highlights", project.highlights)
+        project.set_step_status(self.STEP, "pending")
+
+    def start_service(self, project: Project, full: bool = True) -> None:
+        if full:
+            self.reset_metadata(project)
+        project.set_step_status(self.STEP, "running")
+
+    def end_service(self, project: Project) -> None:
+        project.set_step_status(self.STEP, "completed")
+
+    def execute(self, project: Project, full: bool = False,
+                engine: Optional[Any] = None) -> List[Dict[str, Any]]:
+        """Redraws the still for every clip in the project.
+
+        Every one of them, every time — unlike the clipper, which resumes. A
+        still is one frame rather than a minute of encoding, and the reason to
+        press this is that the pictures on disk were drawn in an older look:
+        skipping the ones that exist would skip exactly the clips the run is
+        for. Each is redrawn from the settings that clip already carries, so a
+        picture made in the editor comes back as itself.
+
+        `full` additionally empties the directory first, which is what takes
+        the stills of highlights that no longer exist off the disk.
+
+        Nothing here reaches YouTube. The pictures are for the user to attach
+        in Studio, and for the cards and clip pages to show.
+        """
+        logger.info(
+            f"Thumbnailer executing for project={project.project_id}, "
+            f"clip_count={len(project.highlights)}, full={full}"
+        )
+        self.start_service(project, full=full)
+        try:
+            # One engine for the whole run: each one loads a detection model,
+            # and doing that per clip is most of the time a batch would take.
+            engine = engine or OpenCVVideoEngine("root/yolov8n.pt")
+
+            total = len(project.highlights)
+            failures: List[str] = []
+            # Indexes, not the highlights themselves: every render writes back
+            # onto its highlight, which replaces the list.
+            for index in range(total):
+                report(f"Drawing thumbnail {index + 1} of {total}")
+                try:
+                    self.generate(project, index, engine=engine)
+                except Exception as e:
+                    # One still that will not draw must not cost the ones after
+                    # it, and the step reports itself as partly done rather than
+                    # failing whole.
+                    message = str(e) or e.__class__.__name__
+                    logger.warning(
+                        f"Skipping the thumbnail for clip {index} of {project.project_id}: {message}"
+                    )
+                    failures.append(message)
+
+            self._settle(project, failures)
+            logger.info(
+                f"Thumbnailer finished for project={project.project_id}: "
+                f"{total - len(failures)} drawn, {len(failures)} failed"
+            )
+            return [h.to_dict() for h in project.highlights]
+        except Exception as e:
+            # Everything outside the per-clip loop: no source video, no engine,
+            # nothing that drawing one more still would have fixed.
+            logger.error(f"Error executing the thumbnails step: {e}")
+            project.fail_step(self.STEP, str(e) or e.__class__.__name__)
+            return []
+
+    def _settle(self, project: Project, failures: List[str]) -> None:
+        """Records how many clips actually have a picture.
+
+        Judged on the files, not on this run's tally: a resume that drew
+        nothing because everything was there is a finished step, and a run that
+        drew nine of ten is not, however well the nine went.
+        """
+        missing = [
+            index
+            for index, highlight in enumerate(project.highlights)
+            if not self.has_thumbnail(project, highlight)
+        ]
+        if not missing:
+            self.end_service(project)
+            return
+        if len(missing) == len(project.highlights):
+            project.fail_step(
+                self.STEP,
+                f"No thumbnail could be drawn. The first failure was: {failures[0]}"
+                if failures
+                else "No thumbnail was drawn.",
+            )
+            return
+        reason = f" The first failure was: {failures[0]}" if failures else ""
+        project.partial_step(
+            self.STEP,
+            f"{len(missing)} of {len(project.highlights)} clips have no thumbnail."
+            f"{reason} Run this step again to try them again.",
+        )
 
     def preview(self, project: Project, highlight: Highlight) -> Dict[str, Any]:
         """What the browser needs to draw this thumbnail before it is rendered.

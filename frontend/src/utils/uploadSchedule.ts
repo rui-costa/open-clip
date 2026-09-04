@@ -1,11 +1,12 @@
 /**
- * The words the upload schedule is described in, shared by the two places that
- * describe it: the application default in Settings, and the project that
- * disagrees with it.
+ * The words a schedule is described in, shared by every place that describes
+ * one: the application defaults in Settings, and the projects that disagree
+ * with them, for the YouTube upload and the Postiz import alike.
  *
- * Both offer the same hours and the same "how many a day", and a project whose
- * options read differently from the default it is following is a project the
- * user cannot compare against anything.
+ * All four offer the same days, the same hours and the same "how many a day".
+ * A project whose options read differently from the default it is following is
+ * a project the user cannot compare against anything — and two platforms whose
+ * options read differently are one set of clips on two calendars.
  */
 
 /**
